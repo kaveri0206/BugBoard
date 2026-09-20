@@ -1,6 +1,7 @@
 /**
  * @file DashboardPage.jsx
- * @description Dynamic dashboard router delivering tailored interfaces for Admin, Developer, and Tester roles.
+ * @description Dynamic dashboard router delivering strictly isolated workspaces for
+ * Admin, Developer, and Tester roles without mock fallback pollution.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -20,7 +21,7 @@ import {
   Legend,
 } from 'chart.js';
 import { Bar, Doughnut } from 'react-chartjs-2';
-import { Sparkles, ArrowRight, CheckCircle, AlertTriangle, Play, ShieldAlert } from 'lucide-react';
+import { Sparkles, Plus } from 'lucide-react';
 
 ChartJS.register(
   CategoryScale,
@@ -46,7 +47,7 @@ export default function DashboardPage() {
 }
 
 /* =========================================================================
-   1. ADMIN DASHBOARD (Governance, Full Telemetry & Global Metrics)
+   1. ADMIN DASHBOARD (Executive Governance, Full Telemetry & Global Metrics)
    ========================================================================= */
 function AdminDashboard({ user }) {
   const [telemetry, setTelemetry] = useState(null);
@@ -71,14 +72,27 @@ function AdminDashboard({ user }) {
     ? telemetry.developerWorkload
     : {
         labels: ['Senior Developer', 'Frontend Engineer', 'Backend Dev'],
-        datasets: [{ label: 'Assigned Tickets', data: [12, 6, 3], backgroundColor: '#38BDF8', borderRadius: 6 }],
+        datasets: [
+          {
+            label: 'Assigned Tickets',
+            data: [12, 6, 3],
+            backgroundColor: '#38BDF8',
+            borderRadius: 6,
+          },
+        ],
       };
 
   const distributionData = telemetry?.globalDistribution?.labels?.length
     ? telemetry.globalDistribution
     : {
         labels: ['Testing', 'Open', 'In Progress', 'Resolved'],
-        datasets: [{ data: [5, 7, 6, 3], backgroundColor: ['#818CF8', '#FB923C', '#A855F7', '#34D399'], borderWidth: 0 }],
+        datasets: [
+          {
+            data: [5, 7, 6, 3],
+            backgroundColor: ['#818CF8', '#FB923C', '#A855F7', '#34D399'],
+            borderWidth: 0,
+          },
+        ],
       };
 
   return (
@@ -90,18 +104,20 @@ function AdminDashboard({ user }) {
             Executive Governance & System Overview
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white">System Command Center</h1>
-          <p className="mt-1 text-xs text-slate-400">Full clearance active. Monitor organization defect velocity, team allocation, and audit events.</p>
+          <p className="mt-1 text-xs text-slate-400">
+            Full clearance active. Monitor organization defect velocity, team allocation, and audit events.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate('/projects')}
-            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5"
+            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-md shadow-sky-500/20"
           >
-            + New Project
+            <Plus size={14} /> New Project
           </button>
           <button
             onClick={() => navigate('/users')}
-            className="px-4 py-2 text-xs font-bold transition-colors rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"
+            className="px-4 py-2 text-xs font-bold transition-colors border rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
           >
             Manage Team
           </button>
@@ -141,12 +157,20 @@ function AdminDashboard({ user }) {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="p-5 border shadow-lg bg-slate-900 border-slate-800 rounded-xl">
-          <h2 className="mb-4 text-xs font-bold tracking-wider uppercase text-slate-300">Developer Workload & Allocation</h2>
-          <div className="h-64"><Bar data={workloadData} options={{ responsive: true, maintainAspectRatio: false }} /></div>
+          <h2 className="mb-4 text-xs font-bold tracking-wider uppercase text-slate-300">
+            Developer Workload & Allocation
+          </h2>
+          <div className="h-64">
+            <Bar data={workloadData} options={{ responsive: true, maintainAspectRatio: false }} />
+          </div>
         </div>
         <div className="p-5 border shadow-lg bg-slate-900 border-slate-800 rounded-xl">
-          <h2 className="mb-4 text-xs font-bold tracking-wider uppercase text-slate-300">Global Ticket Distribution</h2>
-          <div className="flex items-center justify-center h-64"><Doughnut data={distributionData} options={{ responsive: true, maintainAspectRatio: false }} /></div>
+          <h2 className="mb-4 text-xs font-bold tracking-wider uppercase text-slate-300">
+            Global Ticket Distribution
+          </h2>
+          <div className="flex items-center justify-center h-64">
+            <Doughnut data={distributionData} options={{ responsive: true, maintainAspectRatio: false }} />
+          </div>
         </div>
       </div>
     </div>
@@ -154,7 +178,7 @@ function AdminDashboard({ user }) {
 }
 
 /* =========================================================================
-   2. DEVELOPER DASHBOARD (Sprint Workstation & Quick Transitions)
+   2. DEVELOPER DASHBOARD (Personalized to Authenticated Developer)
    ========================================================================= */
 function DeveloperDashboard({ user }) {
   const [assignedIssues, setAssignedIssues] = useState([]);
@@ -167,11 +191,16 @@ function DeveloperDashboard({ user }) {
       setLoading(true);
       const res = await api.get('/issues');
       const allIssues = res.data?.data?.issues || res.data?.issues || res.data?.data || [];
-      // Filter for tickets assigned to this developer or unassigned open tasks
-      const myTickets = allIssues.filter(
-        (i) => i.assignee?._id === user?._id || i.assignee?.email === user?.email
-      );
-      setAssignedIssues(myTickets.length > 0 ? myTickets : allIssues.slice(0, 8));
+
+      // Strictly match only tickets assigned to this authenticated developer
+      const currentUserId = user?._id || user?.id;
+      const myTickets = allIssues.filter((i) => {
+        if (!i.assignee) return false;
+        const aId = typeof i.assignee === 'object' ? i.assignee._id : i.assignee;
+        return aId === currentUserId || (user?.email && i.assignee?.email === user?.email);
+      });
+
+      setAssignedIssues(myTickets);
     } catch (err) {
       console.warn('Developer dashboard fetch error:', err);
     } finally {
@@ -186,16 +215,30 @@ function DeveloperDashboard({ user }) {
   const handleQuickTransition = async (issueId, targetStatus) => {
     try {
       await issueService.changeStatus(issueId, targetStatus);
-      addToast(`Status updated to ${targetStatus}`, 'success');
+      if (typeof addToast === 'function') {
+        addToast(`Status updated to ${targetStatus}`, 'success');
+      }
       fetchMyTickets();
     } catch (err) {
-      addToast('Status transition failed', 'error');
+      if (typeof addToast === 'function') {
+        addToast('Status transition failed', 'error');
+      }
     }
   };
 
-  const inProgressCount = assignedIssues.filter((i) => i.status === 'In Progress').length;
-  const testingCount = assignedIssues.filter((i) => i.status === 'Testing').length;
-  const criticalCount = assignedIssues.filter((i) => i.severity === 'Critical' || i.priority === 'Urgent').length;
+  const inProgressCount = assignedIssues.filter(
+    (i) => (i.status || '').toLowerCase() === 'in progress'
+  ).length;
+
+  const testingCount = assignedIssues.filter(
+    (i) => (i.status || '').toLowerCase() === 'testing'
+  ).length;
+
+  const criticalCount = assignedIssues.filter(
+    (i) =>
+      (i.severity || '').toLowerCase() === 'critical' ||
+      (i.priority || '').toLowerCase() === 'urgent'
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -213,7 +256,7 @@ function DeveloperDashboard({ user }) {
         <div className="flex gap-2">
           <button
             onClick={() => navigate('/kanban')}
-            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5"
+            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-md shadow-sky-500/20"
           >
             Open Kanban Board &rarr;
           </button>
@@ -240,26 +283,53 @@ function DeveloperDashboard({ user }) {
 
       <div className="overflow-hidden border shadow-lg bg-slate-900 border-slate-800 rounded-xl">
         <div className="flex items-center justify-between p-4 border-b border-slate-800">
-          <h2 className="text-xs font-bold tracking-wider uppercase text-slate-200">My Active Sprint Workload</h2>
-          <Link to="/issues" className="text-xs text-sky-400 hover:underline">View All Issues &rarr;</Link>
+          <h2 className="text-xs font-bold tracking-wider uppercase text-slate-200">
+            My Active Sprint Workload ({assignedIssues.length})
+          </h2>
+          <Link to="/issues" className="text-xs text-sky-400 hover:underline">
+            View All Issues &rarr;
+          </Link>
         </div>
         <div className="divide-y divide-slate-800">
           {loading ? (
             <p className="p-6 text-xs text-center text-slate-400">Loading your sprint workload...</p>
           ) : assignedIssues.length === 0 ? (
-            <p className="p-6 text-xs text-center text-slate-500">No active defects currently assigned to you.</p>
+            <div className="p-10 space-y-2 text-center">
+              <p className="text-sm font-semibold text-slate-300">No active defects assigned to you.</p>
+              <p className="text-xs text-slate-500">
+                You are all caught up! Pick up unassigned tickets from the Kanban board or ask an Admin for assignment.
+              </p>
+              <button
+                onClick={() => navigate('/kanban')}
+                className="mt-3 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-semibold rounded-lg transition-colors"
+              >
+                Browse Kanban Board
+              </button>
+            </div>
           ) : (
             assignedIssues.map((issue) => (
-              <div key={issue._id} className="flex flex-col justify-between gap-3 p-4 md:flex-row md:items-center hover:bg-slate-800/40">
+              <div
+                key={issue._id}
+                className="flex flex-col justify-between gap-3 p-4 transition-colors md:flex-row md:items-center hover:bg-slate-800/40"
+              >
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-mono text-xs font-bold text-sky-400">{issue.issueKey}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold">{issue.status}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${issue.severity === 'Critical' ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-800 text-slate-400'}`}>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold">
+                      {issue.status}
+                    </span>
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
+                        issue.severity === 'Critical' ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-800 text-slate-400'
+                      }`}
+                    >
                       {issue.severity}
                     </span>
                   </div>
-                  <Link to={`/issues/${issue._id}`} className="text-sm font-semibold text-white hover:text-sky-400">
+                  <Link
+                    to={`/issues/${issue._id}`}
+                    className="text-sm font-semibold text-white hover:text-sky-400"
+                  >
                     {issue.title}
                   </Link>
                 </div>
@@ -267,7 +337,7 @@ function DeveloperDashboard({ user }) {
                   {issue.status !== 'In Progress' && (
                     <button
                       onClick={() => handleQuickTransition(issue._id, 'In Progress')}
-                      className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded text-xs font-semibold"
+                      className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded text-xs font-semibold transition-colors"
                     >
                       Start Working
                     </button>
@@ -275,14 +345,14 @@ function DeveloperDashboard({ user }) {
                   {issue.status !== 'Testing' && (
                     <button
                       onClick={() => handleQuickTransition(issue._id, 'Testing')}
-                      className="px-2.5 py-1 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded text-xs font-semibold"
+                      className="px-2.5 py-1 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded text-xs font-semibold transition-colors"
                     >
                       Submit for QA
                     </button>
                   )}
                   <Link
                     to={`/issues/${issue._id}`}
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold"
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold transition-colors"
                   >
                     Details
                   </Link>
@@ -297,7 +367,7 @@ function DeveloperDashboard({ user }) {
 }
 
 /* =========================================================================
-   3. TESTER / QA DASHBOARD (Verification Gates & AI-Assisted Defect Logging)
+   3. TESTER / QA DASHBOARD (Personalized to Authenticated Tester)
    ========================================================================= */
 function TesterDashboard({ user }) {
   const [qaQueue, setQaQueue] = useState([]);
@@ -310,14 +380,28 @@ function TesterDashboard({ user }) {
       setLoading(true);
       const res = await api.get('/issues');
       const all = res.data?.data?.issues || res.data?.issues || res.data?.data || [];
-      // QA concentrates on items in 'Testing', 'Resolved', or freshly reported 'Open'
-      setQaQueue(all);
+      const currentUserId = user?._id || user?.id;
+
+      // Strictly isolate to defects reported by this QA tester OR assigned to this QA tester
+      const myQaTickets = all.filter((i) => {
+        const reporterId = typeof i.reporter === 'object' ? i.reporter?._id : i.reporter;
+        const assigneeId = typeof i.assignee === 'object' ? i.assignee?._id : i.assignee;
+
+        return (
+          reporterId === currentUserId ||
+          (user?.email && i.reporter?.email === user?.email) ||
+          assigneeId === currentUserId ||
+          (user?.email && i.assignee?.email === user?.email)
+        );
+      });
+
+      setQaQueue(myQaTickets);
     } catch (err) {
       console.warn('Tester dashboard fetch error:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     fetchQaIssues();
@@ -326,16 +410,22 @@ function TesterDashboard({ user }) {
   const handleSignOff = async (issueId, targetStatus) => {
     try {
       await issueService.changeStatus(issueId, targetStatus);
-      addToast(`Defect marked as ${targetStatus}`, 'success');
+      if (typeof addToast === 'function') {
+        addToast(`Defect marked as ${targetStatus}`, 'success');
+      }
       fetchQaIssues();
     } catch (err) {
-      addToast('Status transition failed', 'error');
+      if (typeof addToast === 'function') {
+        addToast('Status transition failed', 'error');
+      }
     }
   };
 
-  const readyForTesting = qaQueue.filter((i) => i.status === 'Testing');
-  const openCount = qaQueue.filter((i) => i.status === 'Open').length;
-  const closedCount = qaQueue.filter((i) => i.status === 'Closed' || i.status === 'Resolved').length;
+  const readyForTesting = qaQueue.filter((i) => (i.status || '').toLowerCase() === 'testing');
+  const openCount = qaQueue.filter((i) => (i.status || '').toLowerCase() === 'open').length;
+  const closedCount = qaQueue.filter(
+    (i) => (i.status || '').toLowerCase() === 'closed' || (i.status || '').toLowerCase() === 'resolved'
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -347,13 +437,13 @@ function TesterDashboard({ user }) {
           </div>
           <h1 className="text-2xl font-black text-white">QA Testing Command</h1>
           <p className="mt-1 text-xs text-slate-400">
-            Review release candidates, verify developer patches, and report new regressions using Gemini AI Assist.
+            Welcome back, {user?.name}. Manage your reported defects and verify assigned patches.
           </p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => navigate('/issues/create')}
-            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5"
+            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-md shadow-sky-500/20"
           >
             <Sparkles size={14} /> Report Bug with AI
           </button>
@@ -364,12 +454,12 @@ function TesterDashboard({ user }) {
         <div className="p-5 border shadow-lg bg-slate-900 border-slate-800 rounded-xl">
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ready for Verification</p>
           <p className="mt-1 text-3xl font-black text-amber-400">{readyForTesting.length}</p>
-          <p className="text-[10px] text-slate-500 mt-1">Tickets in Testing lane awaiting verification</p>
+          <p className="text-[10px] text-slate-500 mt-1">Tickets in Testing lane</p>
         </div>
         <div className="p-5 border shadow-lg bg-slate-900 border-slate-800 rounded-xl">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Open Defect Backlog</p>
+          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">My Open Defect Backlog</p>
           <p className="mt-1 text-3xl font-black text-sky-400">{openCount}</p>
-          <p className="text-[10px] text-slate-500 mt-1">Unresolved tickets awaiting dev fix</p>
+          <p className="text-[10px] text-slate-500 mt-1">Defects reported awaiting dev fix</p>
         </div>
         <div className="p-5 border shadow-lg bg-slate-900 border-slate-800 rounded-xl">
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Verified & Signed Off</p>
@@ -383,52 +473,65 @@ function TesterDashboard({ user }) {
           <h2 className="text-xs font-bold tracking-wider uppercase text-slate-200">
             QA Verification Queue ({readyForTesting.length} ready)
           </h2>
-          <Link to="/issues" className="text-xs text-sky-400 hover:underline">Full Defect Directory &rarr;</Link>
+          <Link to="/issues" className="text-xs text-sky-400 hover:underline">
+            Full Defect Directory &rarr;
+          </Link>
         </div>
         <div className="divide-y divide-slate-800">
           {loading ? (
             <p className="p-6 text-xs text-center text-slate-400">Loading QA verification queue...</p>
           ) : readyForTesting.length === 0 ? (
-            <div className="p-8 text-center">
-              <p className="text-xs text-slate-400">All submitted patches have been verified and signed off.</p>
+            <div className="p-10 space-y-2 text-center">
+              <p className="text-sm font-semibold text-slate-300">No defects pending your verification.</p>
+              <p className="text-xs text-slate-500">
+                You have not reported any defects currently in the testing lane. Click below to file a new defect ticket.
+              </p>
               <button
                 onClick={() => navigate('/issues/create')}
-                className="mt-3 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-semibold rounded-lg"
+                className="mt-3 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-semibold rounded-lg transition-colors"
               >
-                Log New Regression Defect
+                Log New Defect Ticket
               </button>
             </div>
           ) : (
             readyForTesting.map((issue) => (
-              <div key={issue._id} className="flex flex-col justify-between gap-3 p-4 md:flex-row md:items-center hover:bg-slate-800/40">
+              <div
+                key={issue._id}
+                className="flex flex-col justify-between gap-3 p-4 transition-colors md:flex-row md:items-center hover:bg-slate-800/40"
+              >
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-mono text-xs font-bold text-sky-400">{issue.issueKey}</span>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">
                       Needs QA Gate
                     </span>
-                    <span className="text-[10px] text-slate-400">Project: {issue.project?.key || 'Core'}</span>
+                    <span className="text-[10px] text-slate-400">
+                      Project: {issue.project?.key || issue.project?.projectKey || 'CORE'}
+                    </span>
                   </div>
-                  <Link to={`/issues/${issue._id}`} className="text-sm font-semibold text-white hover:text-sky-400">
+                  <Link
+                    to={`/issues/${issue._id}`}
+                    className="text-sm font-semibold text-white hover:text-sky-400"
+                  >
                     {issue.title}
                   </Link>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={() => handleSignOff(issue._id, 'Resolved')}
-                    className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded text-xs font-semibold"
+                    className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded text-xs font-semibold transition-colors"
                   >
                     Pass & Resolve
                   </button>
                   <button
                     onClick={() => handleSignOff(issue._id, 'Open')}
-                    className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded text-xs font-semibold"
+                    className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded text-xs font-semibold transition-colors"
                   >
                     Fail & Reopen
                   </button>
                   <Link
                     to={`/issues/${issue._id}`}
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold"
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold transition-colors"
                   >
                     View Steps
                   </Link>

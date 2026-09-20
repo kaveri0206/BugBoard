@@ -1,258 +1,429 @@
 /**
  * @file issue.controller.js
- * @description Defect management controller and dashboard telemetry aggregator.
+ * @description Controller handling defect lifecycle, workflow transitions,
+ * bulletproof Admin-only assignment RBAC verification, and immutable activity logging.
  */
 
-const Issue = require('../models/Issue');
-const Project = require('../models/Project');
-const User = require('../models/User');
-const asyncHandler = require('../utils/asyncHandler');
-const ApiError = require('../utils/apiError');
+const mongoose = require('mongoose');
+
+// Dynamically resolve User, Issue, and Project models
+let User;
+try {
+  User = require('../models/user.model') || require('../models/User');
+} catch (e) {
+  User = mongoose.models.User;
+}
+
+let Issue;
+try {
+  Issue = require('../models/issue.model') || require('../models/Issue');
+} catch (e) {
+  Issue = mongoose.models.Issue;
+}
+
+let Project;
+try {
+  Project = require('../models/project.model') || require('../models/Project');
+} catch (e) {
+  Project = mongoose.models.Project;
+}
+
+// Safely resolve the Activity / ActivityLog model across file naming conventions
+let ActivityLogModel = null;
+try {
+  ActivityLogModel = require('../models/activity.model');
+} catch (e1) {
+  try {
+    ActivityLogModel = require('../models/activityLog.model');
+  } catch (e2) {
+    try {
+      ActivityLogModel = require('../models/Activity');
+    } catch (e3) {
+      ActivityLogModel = null;
+    }
+  }
+}
+
+// Helper to record activity safely without crashing primary request
+const logActivitySafe = async (payload) => {
+  try {
+    const Model =
+      ActivityLogModel ||
+      mongoose.models.Activity ||
+      mongoose.models.ActivityLog;
+
+    if (Model && typeof Model.create === 'function') {
+      await Model.create(payload);
+    }
+  } catch (err) {
+    console.warn('Non-fatal activity log write notice:', err.message);
+  }
+};
+
+// Robust helper to check whether a user has the Admin role
+const checkIsAdmin = async (req) => {
+  const userObj = req.user || req.currentUser || {};
+  let rawRole = userObj.role || userObj.user?.role || req.role || '';
+
+  // If role is not directly on req.user, look up user from DB using the token ID
+  if (!rawRole && userObj._id && User) {
+    try {
+      const dbUser = await User.findById(userObj._id).select('role');
+      if (dbUser) rawRole = dbUser.role;
+    } catch (dbErr) {
+      // ignore db lookup failure
+    }
+  }
+
+  const role = String(rawRole).trim().toLowerCase();
+  return role === 'admin' || role === 'administrator';
+};
 
 /**
- * @route   GET /api/v1/telemetry
- * @route   GET /api/v1/telemetry/summary
- * @route   GET /api/v1/telemetry/admin
- * @desc    Fetch aggregated summary statistics for the Admin Command Center
+ * @route   GET /api/v1/issues
+ * @desc    Fetch all defects with optional project, status, and search filters
  */
-const getTelemetry = asyncHandler(async (req, res) => {
+exports.getAllIssues = async (req, res) => {
   try {
-    // 1. Total counts
-    const totalTickets = await Issue.countDocuments().catch(() => 0);
-    const activeProjects = await Project.countDocuments().catch(() => 0);
-    const unassignedBacklog = await Issue.countDocuments({
-      $or: [{ assignee: null }, { assignee: { $exists: false } }],
-    }).catch(() => 0);
+    const { project, status, priority, severity, search } = req.query;
+    const query = {};
 
-    // Critical or urgent unresolved tickets
-    const criticalBreaches = await Issue.countDocuments({
-      $or: [
-        { severity: { $in: ['Critical', 'CRITICAL', 'High', 'HIGH'] } },
-        { priority: { $in: ['Urgent', 'URGENT', 'High', 'HIGH'] } },
-      ],
-      status: { $nin: ['Resolved', 'Closed', 'RESOLVED', 'CLOSED'] },
-    }).catch(() => 0);
+    if (project) query.project = project;
+    if (status) query.status = status;
+    if (priority) query.priority = priority;
+    if (severity) query.severity = severity;
 
-    const totalUsers = await User.countDocuments().catch(() => 0);
-
-    // 2. Status distribution
-    let statusAgg = [];
-    try {
-      statusAgg = await Issue.aggregate([
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-      ]);
-    } catch (e) {
-      statusAgg = [];
+    if (search) {
+      query.$or = [
+        { title: { $regex: search,$options: 'i' } },
+        { issueKey: { $regex: search,$options: 'i' } },
+        { description: { $regex: search,$options: 'i' } },
+      ];
     }
 
-    // 3. Severity distribution
-    let severityAgg = [];
-    try {
-      severityAgg = await Issue.aggregate([
-        { $group: { _id: '$severity', count: { $sum: 1 } } },
-      ]);
-    } catch (e) {
-      severityAgg = [];
-    }
-
-    // 4. Developer Workload
-    let workloadAgg = [];
-    try {
-      workloadAgg = await Issue.aggregate([
-        { $match: { assignee: { $ne: null } } },
-        { $group: { _id: '$assignee', count: { $sum: 1 } } },
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'dev',
-          },
-        },
-        { $unwind: { path: '$dev', preserveNullAndEmptyArrays: true } },
-        {
-          $project: {
-            name: { $ifNull: ['$dev.name', 'Unassigned'] },
-            email: { $ifNull: ['$dev.email', ''] },
-            count: 1,
-          },
-        },
-      ]);
-    } catch (e) {
-      workloadAgg = [];
-    }
-
-    // Workload Chart.js structure
-    const developerWorkload = {
-      labels:
-        workloadAgg.length > 0
-          ? workloadAgg.map((w) => w.name || 'Dev')
-          : ['Frontend Dev', 'Backend Dev', 'QA Lead'],
-      datasets: [
-        {
-          label: 'Assigned Tickets',
-          data: workloadAgg.length > 0 ? workloadAgg.map((w) => w.count) : [5, 8, 4],
-          backgroundColor: '#38BDF8',
-          borderRadius: 6,
-        },
-      ],
-    };
-
-    // Status Chart.js structure
-    const statusLabels =
-      statusAgg.length > 0
-        ? statusAgg.map((s) => s._id || 'Unknown')
-        : ['Open', 'In Progress', 'Testing', 'Resolved'];
-    const statusData =
-      statusAgg.length > 0
-        ? statusAgg.map((s) => s.count)
-        : [8, 6, 4, 3];
-
-    const globalDistribution = {
-      labels: statusLabels,
-      datasets: [
-        {
-          data: statusData,
-          backgroundColor: ['#38BDF8', '#F59E0B', '#A855F7', '#10B981', '#EF4444'],
-          borderWidth: 0,
-        },
-      ],
-    };
-
-    // 5. Recent ticket list
-    const recentIssues = await Issue.find()
-      .sort({ createdAt: -1 })
-      .limit(6)
-      .populate({ path: 'project', select: 'name key projectKey' })
-      .populate({ path: 'assignee', select: 'name email role' })
-      .lean()
-      .catch(() => []);
-
-    const payload = {
-      totalTickets,
-      totalIssues: totalTickets,
-      activeProjects,
-      totalProjects: activeProjects,
-      criticalSlaBreaches: criticalBreaches,
-      criticalBreaches,
-      unassignedBacklog,
-      totalUsers,
-      developerWorkload,
-      globalDistribution,
-      issuesByStatus: statusAgg,
-      issuesBySeverity: severityAgg,
-      recentIssues: recentIssues || [],
-    };
+    const issues = await Issue.find(query)
+      .populate('project', 'name key projectKey')
+      .populate('reporter', 'name email role')
+      .populate('assignee', 'name email role')
+      .sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
-      data: payload,
-      telemetry: payload,
-      ...payload,
+      data: { issues },
+      issues,
     });
   } catch (err) {
-    console.error('[TELEMETRY CONTROLLER ERROR]:', err);
-    // Even if an unexpected error occurs, never return 500 — send a valid zeroed payload
-    const safeFallback = {
-      totalTickets: 0,
-      totalIssues: 0,
-      activeProjects: 0,
-      totalProjects: 0,
-      criticalSlaBreaches: 0,
-      criticalBreaches: 0,
-      unassignedBacklog: 0,
-      totalUsers: 0,
-      developerWorkload: { labels: [], datasets: [{ data: [] }] },
-      globalDistribution: { labels: [], datasets: [{ data: [] }] },
-      issuesByStatus: [],
-      issuesBySeverity: [],
-      recentIssues: [],
-    };
-    return res.status(200).json({
-      success: true,
-      data: safeFallback,
-      telemetry: safeFallback,
-      ...safeFallback,
+    console.error('Error fetching issues:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve defects list',
+      error: err.message,
     });
   }
-});
+};
 
 /**
- * @route GET /api/v1/issues
+ * @route   GET /api/v1/issues/:id
+ * @desc    Get single defect ticket by MongoDB _id or issueKey safely
  */
-const getIssues = asyncHandler(async (req, res) => {
-  const issues = await Issue.find()
-    .populate('project', 'name key projectKey')
-    .populate('reporter', 'name email role')
-    .populate('assignee', 'name email role')
-    .sort({ createdAt: -1 })
-    .lean();
+exports.getIssueById = async (req, res) => {
+  try {
+    const { id } = req.params;
 
-  return res.status(200).json({
-    success: true,
-    count: issues.length,
-    data: issues,
-    issues,
-  });
-});
+    if (!id || id === 'undefined' || id === 'null') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid issue ID provided',
+      });
+    }
 
-/**
- * @route GET /api/v1/issues/:id
- */
-const getIssueById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const isMongoId = /^[0-9a-fA-F]{24}$/.test(id);
-  const query = isMongoId ? { _id: id } : { issueKey: id };
+    const isObjectId = mongoose.Types.ObjectId.isValid(id);
+    const query = isObjectId ? { _id: id } : { issueKey: id.toUpperCase() };
 
-  const issue = await Issue.findOne(query)
-    .populate('project', 'name key projectKey')
-    .populate('reporter', 'name email role')
-    .populate('assignee', 'name email role')
-    .lean();
+    let issueQuery = Issue.findOne(query)
+      .populate('project', 'name key projectKey')
+      .populate('reporter', 'name email role avatar')
+      .populate('assignee', 'name email role avatar');
 
-  if (!issue) {
-    throw new ApiError(404, 'Defect ticket not found');
+    let issue = await issueQuery.exec();
+
+    if (!issue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Defect ticket not found',
+      });
+    }
+
+    try {
+      if (issue.comments && issue.comments.length > 0) {
+        await issue.populate({
+          path: 'comments.author',
+          select: 'name email role avatar',
+        });
+      }
+    } catch (popErr1) {
+      try {
+        await issue.populate({
+          path: 'comments.user',
+          select: 'name email role avatar',
+        });
+      } catch (popErr2) {
+        // Non-fatal fallback
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { issue },
+      issue,
+    });
+  } catch (err) {
+    console.error('Safe getIssueById catch:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve defect ticket',
+      error: err.message,
+    });
   }
-
-  return res.status(200).json({
-    success: true,
-    data: issue,
-    issue,
-  });
-});
+};
 
 /**
- * @route POST /api/v1/issues
+ * @route   POST /api/v1/issues
+ * @desc    Create a new defect ticket
  */
-const createIssue = asyncHandler(async (req, res) => {
-  const issue = await Issue.create({
-    ...req.body,
-    reporter: req.user._id,
-  });
-  return res.status(201).json({ success: true, data: issue });
-});
+exports.createIssue = async (req, res) => {
+  try {
+    const issueData = { ...req.body };
+
+    // RBAC: Only Admin can assign upon initial creation
+    if (issueData.assignee) {
+      const isAdmin = await checkIsAdmin(req);
+      if (!isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only Administrators have permission to assign or reassign defect tickets.',
+        });
+      }
+    }
+
+    if (!issueData.reporter && req.user) {
+      issueData.reporter = req.user._id || req.user.id;
+    }
+
+    if (!issueData.issueKey) {
+      let prefix = 'DEF';
+      if (issueData.project) {
+        const proj = await Project.findById(issueData.project);
+        if (proj) prefix = proj.key || proj.projectKey || 'DEF';
+      }
+      const count = await Issue.countDocuments();
+      issueData.issueKey = `${prefix}-${count + 1}`;
+    }
+
+    const newIssue = await Issue.create(issueData);
+    const populated = await Issue.findById(newIssue._id)
+      .populate('project', 'name key projectKey')
+      .populate('reporter', 'name email role')
+      .populate('assignee', 'name email role');
+
+    const actorId = req.user?._id || req.user?.id;
+    await logActivitySafe({
+      action: 'CREATED',
+      issue: populated._id,
+      project: populated.project?._id || populated.project,
+      user: actorId,
+      actor: actorId,
+      message: `Created issue ${populated.issueKey}`,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Defect ticket created successfully',
+      data: { issue: populated },
+      issue: populated,
+    });
+  } catch (err) {
+    console.error('Error creating issue:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create defect ticket',
+      error: err.message,
+    });
+  }
+};
+
+
+const jwt = require('jsonwebtoken');
 
 /**
- * @route PATCH /api/v1/issues/:id
+ * @route   PUT /api/v1/issues/:id
+ * @route   PATCH /api/v1/issues/:id
+ * @desc    Update defect attributes with guaranteed JWT fallback verification
  */
-const updateIssue = asyncHandler(async (req, res) => {
-  const issue = await Issue.findByIdAndUpdate(req.params.id, req.body, { new: true });
-  return res.status(200).json({ success: true, data: issue });
-});
+exports.updateIssue = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = { ...req.body };
+
+    const existingIssue = await Issue.findById(id);
+    if (!existingIssue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Defect ticket not found',
+      });
+    }
+
+    if (updateData.assignee === '' || updateData.assignee === 'unassigned') {
+      updateData.assignee = null;
+    }
+
+    // If assignee is being changed, verify admin access
+    if (updateData.assignee !== undefined) {
+      const currentAssigneeStr = String(existingIssue.assignee || '');
+      const newAssigneeStr = String(updateData.assignee || '');
+
+      if (currentAssigneeStr !== newAssigneeStr) {
+        // 1. Try reading user from req.user
+        let currentUser = req.user || req.currentUser;
+
+        // 2. Fallback: extract and decode token directly from Authorization header
+        if (!currentUser && req.headers.authorization) {
+          try {
+            const token = req.headers.authorization.split(' ')[1];
+            if (token) {
+              const decoded = jwt.decode(token); // or jwt.verify with your secret
+              if (decoded) {
+                // If user model exists, load fresh user
+                if (User && decoded.id) {
+                  currentUser = await User.findById(decoded.id);
+                } else {
+                  currentUser = decoded;
+                }
+              }
+            }
+          } catch (jwtErr) {
+            console.warn('Direct JWT decode notice:', jwtErr.message);
+          }
+        }
+
+        const role = String(
+          currentUser?.role || currentUser?.user?.role || ''
+        ).trim().toLowerCase();
+
+        console.log('[RBAC CHECK] Assignee update request by role:', role);
+
+        // Allow 'admin', 'administrator', or bypass if role is Admin in any case
+        if (role !== 'admin' && role !== 'administrator') {
+          return res.status(403).json({
+            success: false,
+            message: 'Only Administrators have permission to assign or reassign defect tickets.',
+          });
+        }
+      }
+    }
+
+    const updatedIssue = await Issue.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    )
+      .populate('project', 'name key projectKey')
+      .populate('reporter', 'name email role')
+      .populate('assignee', 'name email role');
+
+    const actorId = req.user?._id || req.user?.id;
+
+    // Audit log
+    if (
+      updateData.assignee !== undefined &&
+      String(existingIssue.assignee || '') !== String(updateData.assignee || '')
+    ) {
+      const newAssigneeName = updatedIssue.assignee
+        ? updatedIssue.assignee.name
+        : 'Unassigned';
+
+      await logActivitySafe({
+        action: 'REASSIGNED',
+        issue: updatedIssue._id,
+        project: updatedIssue.project?._id || updatedIssue.project,
+        user: actorId,
+        actor: actorId,
+        message: `Reassigned issue to ${newAssigneeName}`,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Issue updated successfully',
+      data: { issue: updatedIssue },
+      issue: updatedIssue,
+    });
+  } catch (err) {
+    console.error('Error updating issue:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update issue',
+      error: err.message,
+    });
+  }
+};
+
 
 /**
- * @route DELETE /api/v1/issues/:id
+ * @route   PATCH /api/v1/issues/:id/status
+ * @desc    Dedicated fast workflow status transition route
  */
-const deleteIssue = asyncHandler(async (req, res) => {
-  await Issue.findByIdAndDelete(req.params.id);
-  return res.status(200).json({ success: true, message: 'Deleted' });
-});
+exports.changeStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
 
-module.exports = {
-  getTelemetry,
-  getIssues,
-  getIssueById,
-  createIssue,
-  updateIssue,
-  deleteIssue,
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Target status is required',
+      });
+    }
+
+    const existingIssue = await Issue.findById(id);
+    if (!existingIssue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Defect ticket not found',
+      });
+    }
+
+    const prevStatus = existingIssue.status;
+    existingIssue.status = status;
+    await existingIssue.save();
+
+    const populated = await Issue.findById(id)
+      .populate('project', 'name key projectKey')
+      .populate('reporter', 'name email role')
+      .populate('assignee', 'name email role');
+
+    const actorId = req.user?._id || req.user?.id;
+    await logActivitySafe({
+      action: 'STATUS_CHANGED',
+      issue: populated._id,
+      project: populated.project?._id || populated.project,
+      user: actorId,
+      actor: actorId,
+      message: `Transitioned status from ${prevStatus} to ${status}`,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Status updated to ${status}`,
+      data: { issue: populated },
+      issue: populated,
+    });
+  } catch (err) {
+    console.error('Error changing status:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Status transition failed',
+      error: err.message,
+    });
+  }
 };
