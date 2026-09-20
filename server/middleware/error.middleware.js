@@ -1,24 +1,43 @@
-const ApiError = require('../utils/apiError');
-const env = require('../config/env');
+/**
+ * @file middleware/error.middleware.js
+ * @description Centralized error handler converting all exceptions to standardized JSON.
+ */
 
 const errorHandler = (err, req, res, next) => {
-  let error = err;
+  let statusCode = err.statusCode || 500;
+  let message = err.message || 'Internal Server Error';
 
-  if (!(error instanceof ApiError)) {
-    const statusCode = error.statusCode || error.name === 'ValidationError' ? 400 : 500;
-    const message = error.message || 'Internal Server Error';
-    error = new ApiError(statusCode, message, error?.errors || [], err.stack);
+  // Handle Mongoose duplicate key error (code 11000)
+  if (err.code === 11000) {
+    statusCode = 409;
+    const field = Object.keys(err.keyValue || {})[0] || 'field';
+    message = `Duplicate value entered for ${field}. It must be unique.`;
   }
 
-  const response = {
-    success: false,
-    statusCode: error.statusCode,
-    message: error.message,
-    errors: error.errors || [],
-    ...(env.NODE_ENV === 'development' ? { stack: error.stack } : {}),
-  };
+  // Handle Mongoose validation errors
+  if (err.name === 'ValidationError') {
+    statusCode = 400;
+    message = Object.values(err.errors)
+      .map((val) => val.message)
+      .join(', ');
+  }
 
-  return res.status(error.statusCode).json(response);
+  // Handle JWT invalid signature or expired tokens
+  if (err.name === 'JsonWebTokenError') {
+    statusCode = 401;
+    message = 'Invalid authentication token.';
+  }
+  if (err.name === 'TokenExpiredError') {
+    statusCode = 401;
+    message = 'Authentication token expired.';
+  }
+
+  res.status(statusCode).json({
+    success: false,
+    statusCode,
+    message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+  });
 };
 
 module.exports = errorHandler;

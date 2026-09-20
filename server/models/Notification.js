@@ -1,41 +1,53 @@
+/**
+ * @file Notification.js
+ * @description Mongoose model for user notifications.
+ */
+
 const mongoose = require('mongoose');
 const { NOTIFICATION_TYPES } = require('../config/constants');
 
-const notificationSchema = new mongoose.Schema(
-  {
-    recipient: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-      index: true,
+if (mongoose.models && mongoose.models.Notification) {
+  module.exports = mongoose.models.Notification;
+} else {
+  const notificationSchema = new mongoose.Schema(
+    {
+      recipient: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: [true, 'Recipient is required'],
+      },
+      sender: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+      type: {
+        type: String,
+        enum: Object.values(NOTIFICATION_TYPES),
+        default: NOTIFICATION_TYPES.SYSTEM,
+      },
+      title: {
+        type: String,
+        required: true,
+      },
+      message: {
+        type: String,
+        required: true,
+      },
+      issue: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Issue',
+      },
+      isRead: {
+        type: Boolean,
+        default: false,
+      },
     },
-    type: {
-      type: String,
-      enum: Object.values(NOTIFICATION_TYPES),
-      required: true,
-    },
-    title: {
-      type: String,
-      required: true,
-    },
-    message: {
-      type: String,
-      required: true,
-    },
-    relatedIssue: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Issue',
-      default: null,
-    },
-    isRead: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
-  },
-  { timestamps: true }
-);
+    {
+      timestamps: true,
+      toJSON: { virtuals: true },
+      toObject: { virtuals: true },
+    }
+  );
 
-notificationSchema.index({ recipient: 1, isRead: 1, createdAt: -1 });
-
-module.exports = mongoose.model('Notification', notificationSchema);
+  module.exports = mongoose.model('Notification', notificationSchema);
+}

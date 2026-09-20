@@ -1,24 +1,37 @@
+/**
+ * @file server/routes/auth.routes.js
+ * @description Express routing definitions for user authentication.
+ * Wraps handlers defensively so Express never receives an undefined callback.
+ */
+
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/auth.controller');
-const validate = require('../middleware/validate.middleware');
 const { authenticate } = require('../middleware/auth.middleware');
-const { authLimiter } = require('../middleware/rateLimiter.middleware');
-const {
-  registerSchema,
-  loginSchema,
-  changePasswordSchema,
-  forgotPasswordSchema,
-  resetPasswordSchema,
-} = require('../validators/auth.validator');
 
-router.post('/register', authLimiter, validate(registerSchema), authController.register);
-router.post('/login', authLimiter, validate(loginSchema), authController.login);
-router.post('/refresh', authController.refreshAccessToken);
-router.post('/logout', authController.logout);
-router.get('/me', authenticate, authController.getMe);
-router.put('/change-password', authenticate, validate(changePasswordSchema), authController.changePassword);
-router.post('/forgot-password', authLimiter, validate(forgotPasswordSchema), authController.forgotPassword);
-router.post('/reset-password', authLimiter, validate(resetPasswordSchema), authController.resetPassword);
+// Helper to prevent Express crash if any function is missing
+const safeHandler = (handler, routeName) => {
+  if (typeof handler === 'function') {
+    return handler;
+  }
+  return (req, res) => {
+    res.status(501).json({
+      success: false,
+      message: `Auth route '${routeName}' is not implemented on the server.`,
+    });
+  };
+};
+
+// Public Endpoints
+router.post('/register', safeHandler(authController.register, 'register'));
+router.post('/login', safeHandler(authController.login, 'login'));
+router.post('/refresh', safeHandler(authController.refreshToken, 'refreshToken'));
+router.post('/logout', safeHandler(authController.logout, 'logout'));
+router.post('/forgot-password', safeHandler(authController.forgotPassword, 'forgotPassword'));
+router.post('/reset-password', safeHandler(authController.resetPassword, 'resetPassword'));
+
+// Protected Endpoints
+router.get('/me', authenticate, safeHandler(authController.getMe, 'getMe'));
+router.put('/update-password', authenticate, safeHandler(authController.updatePassword, 'updatePassword'));
 
 module.exports = router;

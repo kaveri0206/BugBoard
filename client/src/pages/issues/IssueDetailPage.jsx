@@ -1,5 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+/**
+ * @file IssueDetailPage.jsx
+ * @description In-depth defect analysis view with status workflow transitions, comments, and audit log.
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import { issueService } from '../../services/issue.service';
 import { commentService } from '../../services/comment.service';
 import { activityService } from '../../services/activity.service';
@@ -27,91 +32,111 @@ export default function IssueDetailPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchFullDetails = async () => {
+  const notify = useCallback((msg, type = 'info') => {
+    if (typeof addToast === 'function') addToast(msg, type);
+  }, [addToast]);
+
+  const fetchFullDetails = useCallback(async () => {
     try {
       const [issueRes, commentsRes, actRes] = await Promise.all([
-        issueService.getById(id),
-        commentService.getByIssue(id),
-        activityService.getIssueActivities(id),
+        issueService.getById(id).catch(() => ({ data: {} })),
+        commentService.getByIssue(id).catch(() => ({ data: {} })),
+        activityService.getIssueActivities(id).catch(() => ({ data: {} })),
       ]);
-      setIssue(issueRes.data.data.issue);
-      setComments(commentsRes.data.data.comments);
-      setActivities(actRes.data.data.activities);
 
-      if (user?.role === ROLES.ADMIN) {
-        const uRes = await userService.getAll();
-        setUsers(uRes.data.data.users);
+      const rawIssue = issueRes.data?.data?.issue || issueRes.data?.issue || issueRes.data?.data;
+      const rawComments = commentsRes.data?.data?.comments || commentsRes.data?.comments || [];
+      const rawActivities = actRes.data?.data?.activities || actRes.data?.activities || [];
+
+      setIssue(rawIssue || null);
+      setComments(Array.isArray(rawComments) ? rawComments : []);
+      setActivities(Array.isArray(rawActivities) ? rawActivities : []);
+
+      if (user?.role === ROLES.ADMIN || user?.role === 'Admin') {
+        const uRes = await userService.getAll().catch(() => ({ data: {} }));
+        const uList = uRes.data?.data?.users || uRes.data?.users || [];
+        setUsers(Array.isArray(uList) ? uList : []);
       }
     } catch (err) {
-      addToast('Failed to load issue details', 'error');
+      notify('Failed to load issue details', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, user?.role, notify]);
 
   useEffect(() => {
     fetchFullDetails();
-  }, [id]);
+  }, [fetchFullDetails]);
 
   const handleStatusChange = async (targetStatus) => {
     try {
       await issueService.changeStatus(issue._id, targetStatus);
-      addToast(`Status updated to ${targetStatus}`, 'success');
+      notify(`Status updated to ${targetStatus}`, 'success');
       fetchFullDetails();
     } catch (err) {
-      addToast(err.response?.data?.message || 'Workflow transition rejected', 'error');
+      notify(err.response?.data?.message || 'Workflow transition rejected', 'error');
     }
   };
 
   const handleAssigneeChange = async (newAssigneeId) => {
     try {
       await issueService.assign(issue._id, newAssigneeId);
-      addToast('Assignee updated', 'success');
+      notify('Assignee updated', 'success');
       fetchFullDetails();
     } catch (err) {
-      addToast('Failed to change assignee', 'error');
+      notify('Failed to change assignee', 'error');
     }
   };
 
   const handlePostComment = async (content) => {
     try {
       await commentService.create(issue._id, { content });
-      addToast('Comment added', 'success');
+      notify('Comment added', 'success');
       fetchFullDetails();
     } catch (err) {
-      addToast('Failed to post comment', 'error');
+      notify('Failed to post comment', 'error');
     }
   };
 
   const handleDeleteComment = async (commentId) => {
     try {
       await commentService.delete(commentId);
-      addToast('Comment removed', 'success');
+      notify('Comment removed', 'success');
       fetchFullDetails();
     } catch (err) {
-      addToast('Failed to delete comment', 'error');
+      notify('Failed to delete comment', 'error');
     }
   };
 
-  if (loading) return <Spinner size="lg" className="text-sky-600 m-8" />;
+  if (loading) return <Spinner size="lg" className="m-8 text-sky-600" />;
   if (!issue) return <p className="p-8 text-center text-slate-500">Ticket not found</p>;
+
+  const statusClass = STATUS_COLORS?.[issue.status] || 'bg-slate-100 text-slate-700';
+  const priorityClass = PRIORITY_COLORS?.[issue.priority] || 'bg-slate-100 text-slate-700';
+  const severityClass = SEVERITY_COLORS?.[issue.severity] || 'bg-slate-100 text-slate-700';
 
   return (
     <div className="space-y-6">
-      <div className="p-6 bg-white rounded-xl border border-slate-200">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4 mb-4">
+      <div className="p-6 bg-white border rounded-xl border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 mb-4 border-b">
           <div>
-            <span className="text-xs font-bold text-sky-600 uppercase">{issue.issueKey}</span>
+            <span className="font-mono text-xs font-bold uppercase text-sky-600">{issue.issueKey}</span>
             <h1 className="text-xl font-bold text-slate-800 mt-0.5">{issue.title}</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className={STATUS_COLORS[issue.status]}>{issue.status}</Badge>
-            <span className={`text-xs px-2 py-0.5 rounded font-medium ${PRIORITY_COLORS[issue.priority]}`}>
+            <Badge className={statusClass}>{issue.status}</Badge>
+            <span className={`text-xs px-2 py-0.5 rounded font-medium ${priorityClass}`}>
               {issue.priority}
             </span>
-            <span className={`text-xs px-2 py-0.5 rounded font-medium ${SEVERITY_COLORS[issue.severity]}`}>
+            <span className={`text-xs px-2 py-0.5 rounded font-medium ${severityClass}`}>
               {issue.severity}
             </span>
+            <Link
+              to={`/issues/${issue._id}/edit`}
+              className="px-3 py-1 text-xs font-semibold transition-colors border rounded bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700"
+            >
+              Edit Ticket
+            </Link>
           </div>
         </div>
 
@@ -122,37 +147,37 @@ export default function IssueDetailPage() {
           />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
             <div>
-              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+              <h3 className="mb-2 text-xs font-bold tracking-wider uppercase text-slate-500">
                 Detailed Description
               </h3>
-              <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
+              <p className="text-xs leading-relaxed whitespace-pre-wrap text-slate-700">
                 {issue.description}
               </p>
             </div>
 
             {issue.stepsToReproduce && (
               <div>
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <h3 className="mb-2 text-xs font-bold tracking-wider uppercase text-slate-500">
                   Steps to Reproduce
                 </h3>
-                <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
+                <p className="text-xs leading-relaxed whitespace-pre-wrap text-slate-700">
                   {issue.stepsToReproduce}
                 </p>
               </div>
             )}
 
             <div>
-              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+              <h3 className="mb-2 text-xs font-bold tracking-wider uppercase text-slate-500">
                 Screenshots & Attachments
               </h3>
-              <FileAttachmentList attachments={issue.attachments} />
+              <FileAttachmentList attachments={issue.attachments || []} />
             </div>
 
             <div className="pt-6 border-t border-slate-100">
-              <h3 className="text-sm font-bold text-slate-800 mb-4">
+              <h3 className="mb-4 text-sm font-bold text-slate-800">
                 Discussion ({comments.length})
               </h3>
               <CommentList comments={comments} onDeleteComment={handleDeleteComment} />
@@ -161,14 +186,14 @@ export default function IssueDetailPage() {
           </div>
 
           <div className="space-y-6">
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+            <div className="p-4 space-y-3 border bg-slate-50 border-slate-200 rounded-xl">
+              <h4 className="text-xs font-bold tracking-wider uppercase text-slate-700">
                 Ticket Metadata
               </h4>
 
               <div>
                 <span className="text-[11px] text-slate-400 block">Assignee</span>
-                {user?.role === ROLES.ADMIN ? (
+                {user?.role === ROLES.ADMIN || user?.role === 'Admin' ? (
                   <Select
                     value={issue.assignee?._id || ''}
                     onChange={(e) => handleAssigneeChange(e.target.value)}
@@ -186,13 +211,13 @@ export default function IssueDetailPage() {
 
               <div>
                 <span className="text-[11px] text-slate-400 block">Reporter</span>
-                <span className="text-xs font-semibold text-slate-700">{issue.reporter?.name}</span>
+                <span className="text-xs font-semibold text-slate-700">{issue.reporter?.name || 'Automated'}</span>
               </div>
 
               <div>
                 <span className="text-[11px] text-slate-400 block">Environment & OS</span>
                 <span className="text-xs text-slate-700">
-                  {issue.environment} ({issue.operatingSystem})
+                  {issue.environment || 'N/A'} ({issue.operatingSystem || 'N/A'})
                 </span>
               </div>
 
@@ -205,7 +230,7 @@ export default function IssueDetailPage() {
             </div>
 
             <div className="p-4 bg-white border border-slate-200 rounded-xl">
-              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+              <h4 className="mb-3 text-xs font-bold tracking-wider uppercase text-slate-700">
                 Audit Timeline
               </h4>
               <ActivityTimeline activities={activities} />

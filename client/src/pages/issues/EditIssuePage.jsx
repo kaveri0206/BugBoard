@@ -1,3 +1,8 @@
+/**
+ * @file EditIssuePage.jsx
+ * @description Modifies existing defect ticket attributes.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { issueService } from '../../services/issue.service';
@@ -18,8 +23,8 @@ export default function EditIssuePage() {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    severity: ISSUE_SEVERITY.MEDIUM,
-    priority: ISSUE_PRIORITY.MEDIUM,
+    severity: ISSUE_SEVERITY?.MEDIUM || 'Medium',
+    priority: ISSUE_PRIORITY?.MEDIUM || 'Medium',
     environment: '',
     browser: '',
     operatingSystem: '',
@@ -29,33 +34,39 @@ export default function EditIssuePage() {
     dueDate: '',
   });
 
+  const notify = (msg, type = 'info') => {
+    if (typeof addToast === 'function') addToast(msg, type);
+  };
+
   useEffect(() => {
     const fetchIssue = async () => {
       try {
         const res = await issueService.getById(id);
-        const issue = res.data.data.issue;
-        setFormData({
-          title: issue.title || '',
-          description: issue.description || '',
-          severity: issue.severity || ISSUE_SEVERITY.MEDIUM,
-          priority: issue.priority || ISSUE_PRIORITY.MEDIUM,
-          environment: issue.environment || '',
-          browser: issue.browser || '',
-          operatingSystem: issue.operatingSystem || '',
-          stepsToReproduce: issue.stepsToReproduce || '',
-          expectedResult: issue.expectedResult || '',
-          actualResult: issue.actualResult || '',
-          dueDate: issue.dueDate ? issue.dueDate.substring(0, 10) : '',
-        });
+        const issue = res.data?.data?.issue || res.data?.issue || res.data?.data;
+        if (issue) {
+          setFormData({
+            title: issue.title || '',
+            description: issue.description || '',
+            severity: issue.severity || 'Medium',
+            priority: issue.priority || 'Medium',
+            environment: issue.environment || '',
+            browser: issue.browser || '',
+            operatingSystem: issue.operatingSystem || '',
+            stepsToReproduce: issue.stepsToReproduce || '',
+            expectedResult: issue.expectedResult || '',
+            actualResult: issue.actualResult || '',
+            dueDate: issue.dueDate ? issue.dueDate.substring(0, 10) : '',
+          });
+        }
       } catch (err) {
-        addToast('Failed to load issue data for editing', 'error');
+        notify('Failed to load issue data for editing', 'error');
         navigate('/issues');
       } finally {
         setLoading(false);
       }
     };
     fetchIssue();
-  }, [id, navigate, addToast]);
+  }, [id, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -65,10 +76,10 @@ export default function EditIssuePage() {
         ...formData,
         dueDate: formData.dueDate ? new Date(formData.dueDate).toISOString() : null,
       });
-      addToast('Issue updated successfully', 'success');
+      notify('Issue updated successfully', 'success');
       navigate(`/issues/${id}`);
     } catch (err) {
-      addToast(err.response?.data?.message || 'Failed to update issue', 'error');
+      notify(err.response?.data?.message || 'Failed to update issue', 'error');
     } finally {
       setSaving(false);
     }
@@ -93,7 +104,7 @@ export default function EditIssuePage() {
 
       <form
         onSubmit={handleSubmit}
-        className="p-6 bg-white rounded-xl border border-slate-200 shadow-sm space-y-4"
+        className="p-6 space-y-4 bg-white border shadow-sm rounded-xl border-slate-200"
       >
         <Input
           label="Title"
@@ -103,11 +114,11 @@ export default function EditIssuePage() {
         />
 
         <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">Description</label>
+          <label className="block mb-1 text-xs font-semibold text-slate-700">Description</label>
           <textarea
             rows={4}
             required
-            className="w-full p-3 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+            className="w-full p-3 text-xs border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 text-slate-800"
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
           />
@@ -118,13 +129,19 @@ export default function EditIssuePage() {
             label="Severity"
             value={formData.severity}
             onChange={(e) => setFormData({ ...formData, severity: e.target.value })}
-            options={Object.values(ISSUE_SEVERITY).map((s) => ({ label: s, value: s }))}
+            options={Object.values(ISSUE_SEVERITY || { LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High', CRITICAL: 'Critical' }).map((s) => ({
+              label: s,
+              value: s,
+            }))}
           />
           <Select
             label="Priority"
             value={formData.priority}
             onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
-            options={Object.values(ISSUE_PRIORITY).map((p) => ({ label: p, value: p }))}
+            options={Object.values(ISSUE_PRIORITY || { LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High', URGENT: 'Urgent' }).map((p) => ({
+              label: p,
+              value: p,
+            }))}
           />
         </div>
 
@@ -147,10 +164,10 @@ export default function EditIssuePage() {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">Steps to Reproduce</label>
+          <label className="block mb-1 text-xs font-semibold text-slate-700">Steps to Reproduce</label>
           <textarea
             rows={3}
-            className="w-full p-3 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="w-full p-3 text-xs border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-800"
             value={formData.stepsToReproduce}
             onChange={(e) => setFormData({ ...formData, stepsToReproduce: e.target.value })}
           />
@@ -158,19 +175,19 @@ export default function EditIssuePage() {
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Expected Result</label>
+            <label className="block mb-1 text-xs font-semibold text-slate-700">Expected Result</label>
             <textarea
               rows={2}
-              className="w-full p-3 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="w-full p-3 text-xs border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-800"
               value={formData.expectedResult}
               onChange={(e) => setFormData({ ...formData, expectedResult: e.target.value })}
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Actual Result</label>
+            <label className="block mb-1 text-xs font-semibold text-slate-700">Actual Result</label>
             <textarea
               rows={2}
-              className="w-full p-3 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="w-full p-3 text-xs border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-800"
               value={formData.actualResult}
               onChange={(e) => setFormData({ ...formData, actualResult: e.target.value })}
             />

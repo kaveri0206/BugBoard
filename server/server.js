@@ -1,24 +1,24 @@
+/**
+ * @file server.js
+ * @description Application entry point. Connects to MongoDB and starts the HTTP listener.
+ */
+
 const app = require('./app');
+const mongoose = require('mongoose');
 const env = require('./config/env');
-const connectDB = require('./config/db');
 
-const startServer = async () => {
-  await connectDB();
+const PORT = env.PORT || 5000;
 
-  const server = app.listen(env.PORT, () => {
-    console.log(`[BUGBOARD SERVER] Running on port ${env.PORT} in ${env.NODE_ENV} mode.`);
-  });
-
-  const shutdown = () => {
-    console.log('[BUGBOARD SERVER] Graceful shutdown initiated...');
-    server.close(() => {
-      console.log('[BUGBOARD SERVER] Process terminated cleanly.');
-      process.exit(0);
+// Connect to MongoDB
+mongoose
+  .connect(env.MONGO_URI)
+  .then(() => {
+    console.log(`[DB] MongoDB Connected: ${mongoose.connection.host}/${mongoose.connection.name}`);
+    app.listen(PORT, () => {
+      console.log(`[BUGBOARD SERVER] Running on port ${PORT} in ${env.NODE_ENV || 'development'} mode.`);
     });
-  };
-
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
-};
-
-startServer();
+  })
+  .catch((err) => {
+    console.error('[DB] Connection error:', err.message);
+    process.exit(1);
+  });

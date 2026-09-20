@@ -1,22 +1,26 @@
+/**
+ * @file issue.routes.js
+ * @description Defect ticket routes including status transitions.
+ */
+
 const express = require('express');
 const router = express.Router();
 const issueController = require('../controllers/issue.controller');
 const { authenticate } = require('../middleware/auth.middleware');
-const validate = require('../middleware/validate.middleware');
-const {
-  createIssueSchema,
-  updateIssueSchema,
-  statusTransitionSchema,
-} = require('../validators/issue.validator');
 
 router.use(authenticate);
 
-router.post('/', validate(createIssueSchema), issueController.createIssue);
 router.get('/', issueController.getIssues);
-router.post('/check-duplicates', issueController.checkDuplicateIssues);
+router.post('/', issueController.createIssue);
 router.get('/:id', issueController.getIssueById);
-router.put('/:id', validate(updateIssueSchema), issueController.updateIssue);
-router.patch('/:id/status', validate(statusTransitionSchema), issueController.transitionStatus);
-router.patch('/:id/assign', issueController.assignIssue);
+
+// General issue patch
+router.patch('/:id', issueController.updateIssue);
+router.put('/:id', issueController.updateIssue);
+
+// Dedicated Kanban status transition route
+router.patch('/:id/status', issueController.updateIssueStatus || issueController.updateIssue);
+
+router.delete('/:id', issueController.deleteIssue);
 
 module.exports = router;

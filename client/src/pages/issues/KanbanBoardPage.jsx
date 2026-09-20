@@ -1,6 +1,6 @@
 /**
- * @file KanbanPage.jsx
- * @description Sprint Kanban Workboard with optimistic updates and DragDropContext.
+ * @file KanbanBoardPage.jsx
+ * @description Drag and drop Sprint Kanban Workboard with optimistic updates.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -19,7 +19,7 @@ const COLUMNS = [
   ISSUE_STATUS?.CLOSED || 'Closed',
 ];
 
-export default function KanbanPage() {
+export default function KanbanBoardPage() {
   const [boardData, setBoardData] = useState({});
   const [loading, setLoading] = useState(true);
   const { addToast } = useToast();
@@ -60,7 +60,6 @@ export default function KanbanPage() {
     const sourceCol = source.droppableId;
     const destCol = destination.droppableId;
 
-    // Snapshot state for rollback
     const previousState = { ...boardData };
 
     const sourceItems = Array.from(boardData[sourceCol] || []);

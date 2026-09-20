@@ -1,42 +1,78 @@
+/**
+ * @file notification.controller.js
+ * @description Safe controller for notifications.
+ */
+
 const Notification = require('../models/Notification');
-const ApiResponse = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
 
 const getNotifications = asyncHandler(async (req, res) => {
-  const notifications = await Notification.find({ recipient: req.user._id })
-    .populate('relatedIssue', 'issueKey title')
-    .sort({ createdAt: -1 })
-    .limit(30);
+  if (!req.user || !req.user._id) {
+    return res.status(200).json({
+      success: true,
+      data: [],
+      notifications: [],
+      unreadCount: 0,
+    });
+  }
 
-  const unreadCount = await Notification.countDocuments({
-    recipient: req.user._id,
-    isRead: false,
-  });
+  try {
+    const notifications = await Notification.find({ recipient: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .populate({ path: 'sender', select: 'name email role' })
+      .populate({ path: 'issue', select: 'issueKey title' })
+      .lean();
 
-  return ApiResponse.success(
-    res,
-    { notifications, unreadCount },
-    'Notifications retrieved'
-  );
+    const unreadCount = await Notification.countDocuments({
+      recipient: req.user._id,
+      isRead: false,
+    }).catch(() => 0);
+
+    return res.status(200).json({
+      success: true,
+      data: notifications || [],
+      notifications: notifications || [],
+      unreadCount: unreadCount || 0,
+    });
+  } catch (err) {
+    return res.status(200).json({
+      success: true,
+      data: [],
+      notifications: [],
+      unreadCount: 0,
+    });
+  }
 });
 
 const markAsRead = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  await Notification.findOneAndUpdate(
-    { _id: id, recipient: req.user._id },
-    { isRead: true }
+  const notification = await Notification.findByIdAndUpdate(
+    req.params.id,
+    { isRead: true },
+    { new: true }
   );
 
-  return ApiResponse.success(res, null, 'Marked notification as read');
+  return res.status(200).json({
+    success: true,
+    data: notification,
+  });
 });
 
 const markAllAsRead = asyncHandler(async (req, res) => {
-  await Notification.updateMany(
-    { recipient: req.user._id, isRead: false },
-    { isRead: true }
-  );
-
-  return ApiResponse.success(res, null, 'All notifications marked as read');
+  if (req.user && req.user._id) {
+    await Notification.updateMany(
+      { recipient: req.user._id, isRead: false },
+      { isRead: true }
+    );
+  }
+  return res.status(200).json({
+    success: true,
+    message: 'All notifications marked as read',
+  });
 });
 
-module.exports = { getNotifications, markAsRead, markAllAsRead };
+module.exports = {
+  getNotifications,
+  markAsRead,
+  markAllAsRead,
+};

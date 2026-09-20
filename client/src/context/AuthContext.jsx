@@ -1,60 +1,158 @@
-import React, { createContext, useState, useEffect } from 'react';
-import { authService } from '../services/auth.service';
+/**
+ * @file client/src/context/AuthContext.jsx
+ * @description Global AuthContext with named and default exports.
+ */
+
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import api from '../services/api';
 
 export const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('bugboard_user');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const savedUser = localStorage.getItem('user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
   });
+
+  const [token, setToken] = useState(() => {
+    return localStorage.getItem('token') || localStorage.getItem('accessToken') || null;
+  });
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const verifyUser = async () => {
-      const token = localStorage.getItem('bugboard_token');
-      if (token) {
-        try {
-          const res = await authService.getMe();
-          setUser(res.data.data.user);
-          localStorage.setItem('bugboard_user', JSON.stringify(res.data.data.user));
-        } catch (e) {
-          setUser(null);
-          localStorage.removeItem('bugboard_token');
-          localStorage.removeItem('bugboard_user');
-        }
+    let isMounted = true;
+    const initializeAuth = async () => {
+      const storedToken = localStorage.getItem('token') || localStorage.getItem('accessToken');
+      if (!storedToken) {
+        if (isMounted) setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      try {
+        const response = await api.get('/auth/me');
+        const userData = response.data?.data?.user || response.data?.user || response.data?.data;
+        if (userData && isMounted) {
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
+        }
+      } catch (err) {
+        if (isMounted) {
+          localStorage.clear();
+          setUser(null);
+          setToken(null);
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     };
-    verifyUser();
+
+    initializeAuth();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  const login = (userData, accessToken, refreshToken) => {
-    setUser(userData);
-    localStorage.setItem('bugboard_user', JSON.stringify(userData));
-    localStorage.setItem('bugboard_token', accessToken);
-    localStorage.setItem('bugboard_refresh_token', refreshToken);
-  };
+  const login = useCallback(async (email, password) => {
+    const response = await api.post('/auth/login', { email, password });
+    const payload = response.data?.data || response.data;
 
-  const logout = async () => {
-    const refreshToken = localStorage.getItem('bugboard_refresh_token');
-    try {
-      if (refreshToken) await authService.logout(refreshToken);
-    } catch (e) {
-      // Ignore network errors on logout
-    } finally {
-      setUser(null);
-      localStorage.removeItem('bugboard_user');
-      localStorage.removeItem('bugboard_token');
-      localStorage.removeItem('bugboard_refresh_token');
-      // Redirect to the public Homepage on logout
-      window.location.href = '/';
+    const resolvedToken = payload.accessToken || payload.token;
+    const resolvedRefreshToken = payload.refreshToken;
+    const resolvedUser = payload.user;
+
+    if (!resolvedToken || !resolvedUser) {
+      throw new Error('Invalid authentication response.');
     }
-  };
+
+    localStorage.setItem('token', resolvedToken);
+    localStorage.setItem('accessToken', resolvedToken);
+    if (resolvedRefreshToken) {
+      localStorage.setItem('refreshToken', resolvedRefreshToken);
+    }
+    localStorage.setItem('user', JSON.stringify(resolvedUser));
+
+    api.defaults.headers.common['Authorization'] = `Bearer ${resolvedToken}`;
+
+    setToken(resolvedToken);
+    setUser(resolvedUser);
+
+    return resolvedUser;
+  }, []);
+
+  const register = useCallback(async (name, email, password, role) => {
+    const response = await api.post('/auth/register', { name, email, password, role });
+    const payload = response.data?.data || response.data;
+
+    const resolvedToken = payload.accessToken || payload.token;
+    const resolvedUser = payload.user;
+
+    if (resolvedToken && resolvedUser) {
+      localStorage.setItem('token', resolvedToken);
+      localStorage.setItem('accessToken', resolvedToken);
+      localStorage.setItem('user', JSON.stringify(resolvedUser));
+      api.defaults.headers.common['Authorization'] = `Bearer ${resolvedToken}`;
+      setToken(resolvedToken);
+      setUser(resolvedUser);
+    }
+
+    return resolvedUser;
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (refreshToken) {
+        await api.post('/auth/logout', { refreshToken });
+      }
+    } catch {
+      // Continue cleanup
+    } finally {
+      localStorage.clear();
+      delete api.defaults.headers.common['Authorization'];
+      setUser(null);
+      setToken(null);
+      window.location.href = '/login';
+    }
+  }, []);
+
+  const updateUser = useCallback((updatedUserData) => {
+    setUser((prev) => {
+      const merged = { ...prev, ...updatedUserData };
+      localStorage.setItem('user', JSON.stringify(merged));
+      return merged;
+    });
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, isAuthenticated: Boolean(user) }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        loading,
+        isAuthenticated: Boolean(token && user),
+        login,
+        register,
+        logout,
+        setUser: updateUser,
+        updateUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
 };
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
+export default AuthContext;

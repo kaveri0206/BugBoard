@@ -6,5 +6,11 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Disable noisy sourcemap warnings for pre-bundled node_modules
+    sourcemapIgnoreList: (relativeSourcePath) =>
+      relativeSourcePath.includes('node_modules'),
+  },
+  build: {
+    sourcemap: false,
   },
 });

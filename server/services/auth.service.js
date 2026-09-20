@@ -1,39 +1,25 @@
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
-const Token = require('../models/Token');
 
-const generateAccessToken = (user) => {
-  return jwt.sign(
-    {
-      id: user._id,
-      email: user.email,
-      role: user.role,
-      name: user.name,
-    },
-    env.JWT_ACCESS_SECRET,
-    { expiresIn: env.JWT_ACCESS_EXPIRES_IN }
-  );
-};
+const generateTokens = (user) => {
+  const payload = {
+    id: user._id,
+    role: user.role,
+    email: user.email,
+  };
 
-const generateRefreshToken = async (user) => {
-  const token = jwt.sign({ id: user._id }, env.JWT_REFRESH_SECRET, {
-    expiresIn: env.JWT_REFRESH_EXPIRES_IN,
+  const accessToken = jwt.sign(payload, env.JWT_SECRET, {
+    expiresIn: env.JWT_EXPIRES_IN || '15m',
   });
 
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7);
-
-  await Token.create({
-    userId: user._id,
-    token,
-    type: 'REFRESH',
-    expiresAt,
+  const refreshToken = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
+    expiresIn: env.JWT_REFRESH_EXPIRES_IN || '7d',
   });
 
-  return token;
+  return { accessToken, refreshToken };
 };
 
 module.exports = {
-  generateAccessToken,
-  generateRefreshToken,
+  generateTokens,
+  // ... other methods
 };

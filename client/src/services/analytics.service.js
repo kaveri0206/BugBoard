@@ -1,6 +1,12 @@
+/**
+ * @file client/src/services/analytics.service.js
+ * @description Axios service calls for analytics and velocity metrics.
+ */
+
 import api from './api';
 
 export const analyticsService = {
-  getDashboard: () => api.get('/analytics/dashboard'),
-  getMetrics: () => api.get('/analytics/metrics'),
+  getMetrics: () => api.get('/analytics'),
 };
+
+export default analyticsService;

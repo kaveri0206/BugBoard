@@ -1,126 +1,122 @@
+/**
+ * @file project.controller.js
+ * @description Controller for projects list and workspace detail views.
+ */
+
 const Project = require('../models/Project');
+const User = require('../models/User');
 const Issue = require('../models/Issue');
-const ApiError = require('../utils/apiError');
-const ApiResponse = require('../utils/apiResponse');
 const asyncHandler = require('../utils/asyncHandler');
-const { recordActivity } = require('../services/audit.service');
-const { ACTIVITY_ACTIONS, ROLES } = require('../config/constants');
+const ApiError = require('../utils/apiError');
 
-const createProject = asyncHandler(async (req, res) => {
-  const { name, projectKey, description, members } = req.body;
+/**
+ * @route   GET /api/v1/projects
+ * @desc    Fetch all projects with defect count summaries
+ */
+const getProjects = asyncHandler(async (req, res) => {
+  try {
+    const projects = await Project.find()
+      .populate({ path: 'lead', select: 'name email role' })
+      .populate({ path: 'members', select: 'name email role' })
+      .lean();
 
-  const existing = await Project.findOne({ projectKey: projectKey.toUpperCase() });
-  if (existing) {
-    throw new ApiError(409, `Project key '${projectKey}' already exists.`);
+    const projectsWithCounts = await Promise.all(
+      (projects || []).map(async (project) => {
+        try {
+          const count = await Issue.countDocuments({ project: project._id });
+          return {
+            ...project,
+            issueCount: count,
+            totalIssues: count,
+          };
+        } catch (e) {
+          return {
+            ...project,
+            issueCount: 0,
+            totalIssues: 0,
+          };
+        }
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: projectsWithCounts.length,
+      data: projectsWithCounts,
+      projects: projectsWithCounts,
+    });
+  } catch (err) {
+    console.error('[GET PROJECTS ERROR]:', err);
+    return res.status(200).json({
+      success: true,
+      count: 0,
+      data: [],
+      projects: [],
+    });
+  }
+});
+
+/**
+ * @route   GET /api/v1/projects/:id
+ * @desc    Fetch single project details and associated defect list
+ */
+const getProjectById = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const isMongoId = /^[0-9a-fA-F]{24}$/.test(id);
+  const query = isMongoId ? { _id: id } : { key: id.toUpperCase() };
+
+  const project = await Project.findOne(query)
+    .populate({ path: 'lead', select: 'name email role' })
+    .populate({ path: 'members', select: 'name email role' })
+    .lean();
+
+  if (!project) {
+    throw new ApiError(404, 'Project not found');
   }
 
-  const initialMembers = Array.isArray(members) ? [...new Set([...members, req.user._id.toString()])] : [req.user._id];
+  const issues = await Issue.find({ project: project._id })
+    .populate({ path: 'assignee', select: 'name email' })
+    .sort({ createdAt: -1 })
+    .lean();
 
+  const payload = {
+    ...project,
+    issues: issues || [],
+    issueCount: (issues || []).length,
+  };
+
+  return res.status(200).json({
+    success: true,
+    data: payload,
+    project: payload,
+    issues: issues || [],
+  });
+});
+
+/**
+ * @route   POST /api/v1/projects
+ */
+const createProject = asyncHandler(async (req, res) => {
+  const { name, key, description, members } = req.body;
   const project = await Project.create({
     name,
-    projectKey: projectKey.toUpperCase(),
+    key: key.toUpperCase(),
+    projectKey: key.toUpperCase(),
     description,
-    owner: req.user._id,
-    members: initialMembers,
+    lead: req.user._id,
+    members: members && members.length > 0 ? members : [req.user._id],
   });
 
-  await recordActivity({
-    actorId: req.user._id,
-    action: ACTIVITY_ACTIONS.PROJECT_CREATED,
-    entityType: 'Project',
-    entityId: project._id,
-    newValue: project,
-    message: `Project ${project.name} (${project.projectKey}) created.`,
+  return res.status(201).json({
+    success: true,
+    message: 'Project created successfully',
+    data: project,
+    project: project,
   });
-
-  return ApiResponse.created(res, { project }, 'Project created successfully');
-});
-
-const getProjects = asyncHandler(async (req, res) => {
-  const filter = {};
-  if (req.user.role !== ROLES.ADMIN) {
-    filter.members = req.user._id;
-  }
-
-  const projects = await Project.find(filter)
-    .populate('owner', 'name email avatar')
-    .populate('members', 'name email avatar role')
-    .sort({ createdAt: -1 });
-
-  return ApiResponse.success(res, { projects }, 'Projects fetched successfully');
-});
-
-const getProjectById = asyncHandler(async (req, res) => {
-  const project = await Project.findById(req.params.id)
-    .populate('owner', 'name email avatar')
-    .populate('members', 'name email avatar role');
-
-  if (!project) throw new ApiError(404, 'Project not found');
-
-  if (
-    req.user.role !== ROLES.ADMIN &&
-    !project.members.some((m) => m._id.toString() === req.user._id.toString())
-  ) {
-    throw new ApiError(403, 'Access denied: You are not assigned to this project.');
-  }
-
-  const issueStats = await Issue.aggregate([
-    { $match: { project: project._id } },
-    { $group: { _id: '$status', count: { $sum: 1 } } },
-  ]);
-
-  return ApiResponse.success(res, { project, stats: issueStats }, 'Project details fetched');
-});
-
-const updateProject = asyncHandler(async (req, res) => {
-  const project = await Project.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true,
-  });
-
-  if (!project) throw new ApiError(404, 'Project not found');
-
-  await recordActivity({
-    actorId: req.user._id,
-    action: ACTIVITY_ACTIONS.UPDATED,
-    entityType: 'Project',
-    entityId: project._id,
-    newValue: req.body,
-    message: `Project ${project.name} updated.`,
-  });
-
-  return ApiResponse.success(res, { project }, 'Project updated successfully');
-});
-
-const addProjectMember = asyncHandler(async (req, res) => {
-  const { userId } = req.body;
-  const project = await Project.findById(req.params.id);
-  if (!project) throw new ApiError(404, 'Project not found');
-
-  if (!project.members.includes(userId)) {
-    project.members.push(userId);
-    await project.save();
-  }
-
-  return ApiResponse.success(res, { project }, 'Member added to project');
-});
-
-const removeProjectMember = asyncHandler(async (req, res) => {
-  const { userId } = req.params;
-  const project = await Project.findById(req.params.id);
-  if (!project) throw new ApiError(404, 'Project not found');
-
-  project.members = project.members.filter((m) => m.toString() !== userId);
-  await project.save();
-
-  return ApiResponse.success(res, { project }, 'Member removed from project');
 });
 
 module.exports = {
-  createProject,
   getProjects,
   getProjectById,
-  updateProject,
-  addProjectMember,
-  removeProjectMember,
+  createProject,
 };

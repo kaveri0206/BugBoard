@@ -1,208 +1,106 @@
+/**
+ * @file Sidebar.jsx
+ * @description Sidebar navigation reflecting system roles and workspace views.
+ */
+
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
-import {
-  LayoutDashboard,
-  FolderGit2,
-  Bug,
-  Kanban,
-  BarChart3,
-  Users,
-  ShieldCheck,
-  UserCircle,
-  CheckSquare,
-  PlusCircle,
-  Briefcase
-} from 'lucide-react';
-import { ROLES } from '../../config/constants';
+import { useAuth } from '../../context/AuthContext';
 
-export default function Sidebar() {
+const Sidebar = () => {
   const { user } = useAuth();
+  const isAdmin = user?.role === 'Admin';
 
-  // Core navigation for all logged-in members
-  const standardLinks = [
-    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'Projects', path: '/projects', icon: FolderGit2 },
-    { name: 'Issue Registry', path: '/issues', icon: Bug },
-    { name: 'Kanban Board', path: '/kanban', icon: Kanban },
-    { name: 'Analytics', path: '/analytics', icon: BarChart3 },
-  ];
-
-  // Specific role links
-  const devLinks = [
-    { name: 'My Active Tasks', path: `/issues?assignee=${user?._id || ''}`, icon: Briefcase },
-  ];
-
-  const testerLinks = [
-    { name: 'QA Verify Queue', path: '/issues?status=Testing', icon: CheckSquare },
-    { name: 'Report Bug', path: '/issues/create', icon: PlusCircle },
-  ];
-
-  const adminLinks = [
-    { name: 'User Management', path: '/admin/users', icon: Users },
-    { name: 'Audit & Security Log', path: '/admin/audit', icon: ShieldCheck },
-  ];
+  const navItemClass = ({ isActive }) =>
+    `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-150 ${
+      isActive
+        ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30 shadow-md shadow-sky-500/5'
+        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+    }`;
 
   return (
-    <aside className="flex flex-col w-64 min-h-screen bg-slate-900 text-slate-300 shrink-0">
-      {/* Brand Header */}
-      <div className="flex items-center justify-between h-16 px-6 border-b border-slate-800">
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center justify-center w-8 h-8 text-base font-bold text-white rounded-lg shadow-sm bg-sky-500">
-            B
+    <aside className="flex flex-col justify-between w-64 p-4 border-r select-none bg-slate-950 border-slate-800/80 shrink-0">
+      <div className="space-y-6">
+        {/* Brand Banner */}
+        <div className="flex items-center justify-between px-2 pt-1">
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 text-sm font-black rounded-lg shadow-md bg-sky-500 text-slate-950 shadow-sky-500/30">
+              B
+            </div>
+            <span className="text-base font-bold tracking-tight text-white">
+              BugBoard
+            </span>
           </div>
-          <span className="text-base font-bold tracking-wide text-white">BugBoard</span>
+          <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-400 border border-rose-500/30">
+            {user?.role || 'User'}
+          </span>
         </div>
-        <span className={`text-[9px] uppercase font-mono px-2 py-0.5 rounded font-semibold border ${
-          user?.role === ROLES.ADMIN ? 'bg-rose-950 text-rose-300 border-rose-800' :
-          user?.role === ROLES.DEVELOPER ? 'bg-sky-950 text-sky-300 border-sky-800' :
-          'bg-emerald-950 text-emerald-300 border-emerald-800'
-        }`}>
-          {user?.role}
-        </span>
-      </div>
 
-      {/* Navigation Sections */}
-      <nav className="flex-1 px-4 py-4 space-y-6 overflow-y-auto">
-        <div>
-          <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-2">
+        {/* General Section */}
+        <div className="space-y-1">
+          <p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">
             General
-          </span>
-          <div className="space-y-1">
-            {standardLinks.map((link) => {
-              const Icon = link.icon;
-              return (
-                <NavLink
-                  key={link.path}
-                  to={link.path}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                      isActive
-                        ? 'bg-sky-600 text-white'
-                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                    }`
-                  }
-                >
-                  <Icon size={16} />
-                  {link.name}
-                </NavLink>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Role Custom Navigation Workspaces */}
-        {user?.role === ROLES.DEVELOPER && (
-          <div>
-            <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-sky-400 block mb-2">
-              Developer Scope
-            </span>
-            <div className="space-y-1">
-              {devLinks.map((link) => {
-                const Icon = link.icon;
-                return (
-                  <NavLink
-                    key={link.path}
-                    to={link.path}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-sky-600 text-white'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                      }`
-                    }
-                  >
-                    <Icon size={16} />
-                    {link.name}
-                  </NavLink>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {user?.role === ROLES.TESTER && (
-          <div>
-            <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-emerald-400 block mb-2">
-              QA Workbench
-            </span>
-            <div className="space-y-1">
-              {testerLinks.map((link) => {
-                const Icon = link.icon;
-                return (
-                  <NavLink
-                    key={link.path}
-                    to={link.path}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-emerald-600 text-white'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                      }`
-                    }
-                  >
-                    <Icon size={16} />
-                    {link.name}
-                  </NavLink>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {user?.role === ROLES.ADMIN && (
-          <div>
-            <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-rose-400 block mb-2">
-              Administration
-            </span>
-            <div className="space-y-1">
-              {adminLinks.map((link) => {
-                const Icon = link.icon;
-                return (
-                  <NavLink
-                    key={link.path}
-                    to={link.path}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                        isActive
-                          ? 'bg-rose-600 text-white'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                      }`
-                    }
-                  >
-                    <Icon size={16} />
-                    {link.name}
-                  </NavLink>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        <div>
-          <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-2">
-            Account
-          </span>
-          <NavLink
-            to="/profile"
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                isActive
-                  ? 'bg-sky-600 text-white'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`
-            }
-          >
-            <UserCircle size={16} />
-            My Profile & Security
+          </p>
+          <NavLink to="/dashboard" className={navItemClass}>
+            <span className="text-base">⊞</span>
+            <span>Dashboard</span>
+          </NavLink>
+          <NavLink to="/projects" className={navItemClass}>
+            <span className="text-base">📁</span>
+            <span>Projects</span>
+          </NavLink>
+          <NavLink to="/issues" className={navItemClass}>
+            <span className="text-base">🐞</span>
+            <span>Issue Registry</span>
+          </NavLink>
+          <NavLink to="/kanban" className={navItemClass}>
+            <span className="text-base">▥</span>
+            <span>Kanban Board</span>
+          </NavLink>
+          <NavLink to="/analytics" className={navItemClass}>
+            <span className="text-base">📊</span>
+            <span>Analytics</span>
           </NavLink>
         </div>
-      </nav>
 
-      <div className="p-4 border-t border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
-        <span>v1.0.0 Enterprise</span>
-        <span className="w-2 h-2 rounded-full bg-emerald-500" title="API Online"></span>
+        {/* Administration Section */}
+        {isAdmin && (
+          <div className="space-y-1">
+            <p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">
+              Administration
+            </p>
+            <NavLink to="/users" className={navItemClass}>
+              <span className="text-base">👥</span>
+              <span>User Management</span>
+            </NavLink>
+            <NavLink to="/audit" className={navItemClass}>
+              <span className="text-base">🛡️</span>
+              <span>Audit & Security Log</span>
+            </NavLink>
+          </div>
+        )}
+
+        {/* Account Section */}
+        <div className="space-y-1">
+          <p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">
+            Account
+          </p>
+          <NavLink to="/profile" className={navItemClass}>
+            <span className="text-base">⚙️</span>
+            <span>My Profile & Security</span>
+          </NavLink>
+        </div>
+      </div>
+
+      {/* Footer Profile Mini-card */}
+      <div className="flex items-center justify-between p-3 border bg-slate-900/60 border-slate-800/80 rounded-xl">
+        <div className="truncate">
+          <p className="text-xs font-semibold text-white truncate">{user?.name}</p>
+          <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
+        </div>
       </div>
     </aside>
   );
-}
+};
+
+export default Sidebar;

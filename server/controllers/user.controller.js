@@ -1,86 +1,116 @@
+/**
+ * @file user.controller.js
+ * @description Controller for administrative user management (roles, activation status, directory).
+ */
+
 const User = require('../models/User');
 const Issue = require('../models/Issue');
-const ApiError = require('../utils/apiError');
-const ApiResponse = require('../utils/apiResponse');
+const ActivityLog = require('../models/ActivityLog');
 const asyncHandler = require('../utils/asyncHandler');
-const { recordActivity } = require('../services/audit.service');
-const { ACTIVITY_ACTIONS } = require('../config/constants');
+const ApiError = require('../utils/apiError');
 
+/**
+ * @route   GET /api/v1/users
+ * @desc    Fetch all users with counts of their assigned defect tickets
+ */
 const getAllUsers = asyncHandler(async (req, res) => {
-  const { role, isActive, search } = req.query;
-  const filter = {};
+  const users = await User.find().select('-password').sort({ createdAt: -1 }).lean();
 
-  if (role) filter.role = role;
-  if (isActive !== undefined) filter.isActive = isActive === 'true';
-  if (search) {
-    filter.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } },
-    ];
-  }
-
-  const users = await User.find(filter).sort({ createdAt: -1 });
-
-  // Attach assigned issue count
-  const enrichedUsers = await Promise.all(
+  const usersWithCounts = await Promise.all(
     users.map(async (u) => {
-      const assignedCount = await Issue.countDocuments({ assignee: u._id });
+      const assignedCount = await Issue.countDocuments({ assignee: u._id }).catch(() => 0);
       return {
-        ...u.toObject(),
+        ...u,
         assignedIssuesCount: assignedCount,
       };
     })
   );
 
-  return ApiResponse.success(res, { users: enrichedUsers }, 'Users retrieved successfully');
+  return res.status(200).json({
+    success: true,
+    count: usersWithCounts.length,
+    data: { users: usersWithCounts },
+    users: usersWithCounts,
+  });
 });
 
+/**
+ * @route   PATCH /api/v1/users/:id/role
+ * @desc    Update a user's RBAC role (Admin, Developer, Tester)
+ */
 const updateUserRole = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { role } = req.body;
 
-  const targetUser = await User.findById(id);
-  if (!targetUser) throw new ApiError(404, 'User not found');
+  if (!role || !['Admin', 'Developer', 'Tester'].includes(role)) {
+    throw new ApiError(400, 'A valid role (Admin, Developer, Tester) is required.');
+  }
 
-  const oldRole = targetUser.role;
-  targetUser.role = role;
-  await targetUser.save();
+  const userToUpdate = await User.findById(id);
+  if (!userToUpdate) {
+    throw new ApiError(404, 'Target user not found');
+  }
 
-  await recordActivity({
-    actorId: req.user._id,
-    action: ACTIVITY_ACTIONS.UPDATED,
-    entityType: 'User',
-    entityId: targetUser._id,
-    oldValue: { role: oldRole },
-    newValue: { role },
-    message: `User ${targetUser.name} role changed from ${oldRole} to ${role}`,
+  const oldRole = userToUpdate.role;
+  userToUpdate.role = role;
+  await userToUpdate.save();
+
+  // Log to Audit Trail
+  await ActivityLog.create({
+    action: 'UPDATED',
+    user: req.user._id,
+    actor: req.user._id,
+    message: `Updated role of ${userToUpdate.name} from ${oldRole} to ${role}`,
+    details: { targetUserId: userToUpdate._id, oldRole, newRole: role },
+  }).catch(() => null);
+
+  return res.status(200).json({
+    success: true,
+    message: `Role successfully changed to ${role}`,
+    data: { user: userToUpdate },
+    user: userToUpdate,
   });
-
-  return ApiResponse.success(res, { user: targetUser }, 'User role updated successfully');
 });
 
+/**
+ * @route   PATCH /api/v1/users/:id/status
+ * @desc    Toggle user active/deactivated state
+ */
 const toggleUserStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const targetUser = await User.findById(id);
-  if (!targetUser) throw new ApiError(404, 'User not found');
 
+  const targetUser = await User.findById(id);
+  if (!targetUser) {
+    throw new ApiError(404, 'Target user not found');
+  }
+
+  // Prevent admin from locking their own account
   if (targetUser._id.toString() === req.user._id.toString()) {
-    throw new ApiError(400, 'Cannot deactivate your own administrator account');
+    throw new ApiError(400, 'Security Guard: You cannot deactivate your own active session.');
   }
 
   targetUser.isActive = !targetUser.isActive;
   await targetUser.save();
 
-  await recordActivity({
-    actorId: req.user._id,
-    action: ACTIVITY_ACTIONS.UPDATED,
-    entityType: 'User',
-    entityId: targetUser._id,
-    newValue: { isActive: targetUser.isActive },
-    message: `User ${targetUser.name} active state set to ${targetUser.isActive}`,
-  });
+  // Log to Audit Trail
+  await ActivityLog.create({
+    action: 'UPDATED',
+    user: req.user._id,
+    actor: req.user._id,
+    message: `${targetUser.isActive ? 'Activated' : 'Deactivated'} account for ${targetUser.name}`,
+    details: { targetUserId: targetUser._id, isActive: targetUser.isActive },
+  }).catch(() => null);
 
-  return ApiResponse.success(res, { user: targetUser }, 'User status toggled');
+  return res.status(200).json({
+    success: true,
+    message: `User status changed to ${targetUser.isActive ? 'Active' : 'Disabled'}`,
+    data: { user: targetUser },
+    user: targetUser,
+  });
 });
 
-module.exports = { getAllUsers, updateUserRole, toggleUserStatus };
+module.exports = {
+  getAllUsers,
+  updateUserRole,
+  toggleUserStatus,
+};

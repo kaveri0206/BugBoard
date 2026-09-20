@@ -1,16 +1,14 @@
+/**
+ * @file utils/apiError.js
+ * @description Custom operational error class extending standard Error.
+ */
+
 class ApiError extends Error {
-  constructor(statusCode, message = 'Internal Server Error', errors = [], stack = '') {
+  constructor(statusCode, message) {
     super(message);
     this.statusCode = statusCode;
-    this.data = null;
     this.success = false;
-    this.errors = errors;
-
-    if (stack) {
-      this.stack = stack;
-    } else {
-      Error.captureStackTrace(this, this.constructor);
-    }
+    Error.captureStackTrace(this, this.constructor);
   }
 }
 
