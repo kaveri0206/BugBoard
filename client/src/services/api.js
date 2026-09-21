@@ -1,21 +1,35 @@
 /**
  * @file client/src/services/api.js
- * @description Centralized Axios instance with bearer injection and safe token access.
+ * @description Centralized Axios instance with bearer injection, safe token access,
+ * and automatic API URL normalization for local and production environments.
  */
 
 import axios from 'axios';
 
+// Get base URL from environment or default to local development port
+const rawEnvUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
+
+// Sanitize string: trim whitespace and remove trailing slashes
+const cleanUrl = rawEnvUrl.trim().replace(/\/+$/, '');
+
+// Ensure /api/v1 is appended if omitted in deployment environment variables
+const resolvedBaseURL = cleanUrl.endsWith('/api/v1')
+  ? cleanUrl
+  : `${cleanUrl}/api/v1`;
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1',
+  baseURL: resolvedBaseURL,
   headers: {
     'Content-Type': 'application/json',
   },
   withCredentials: true,
 });
 
+// Interceptor: inject Authorization Bearer token into outgoing requests
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
+    const token =
+      localStorage.getItem('token') || localStorage.getItem('accessToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -24,11 +38,12 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// Interceptor: handle 401 Unauthorized responses safely without breaking notification polling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      const isPolling = error.config.url?.includes('/notifications');
+      const isPolling = error.config?.url?.includes('/notifications');
       const isAuthPage =
         window.location.pathname === '/login' ||
         window.location.pathname === '/register';
