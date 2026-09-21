@@ -12,6 +12,17 @@ import AIAssistantModal from '../../components/ai/AIAssistantModal';
 import { Sparkles, ArrowLeft, Send } from 'lucide-react';
 import { PRIORITY, SEVERITY } from '../../config/constants';
 
+const extractProjectsFromResponse = (res) => {
+  if (!res) return [];
+  const body = res.data !== undefined ? res.data : res;
+
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.projects)) return body.projects;
+  if (Array.isArray(body?.data?.projects)) return body.data.projects;
+  if (Array.isArray(body?.data)) return body.data;
+  return [];
+};
+
 export default function CreateIssuePage() {
   const navigate = useNavigate();
   const { addToast } = useToast();
@@ -39,8 +50,8 @@ export default function CreateIssuePage() {
     const loadProjects = async () => {
       try {
         const res = await projectService.getAll();
-        const pList = res.data?.data?.projects || res.data?.projects || res.data?.data || [];
-        setProjects(Array.isArray(pList) ? pList : []);
+        const pList = extractProjectsFromResponse(res);
+        setProjects(pList);
         if (pList.length > 0) {
           setFormData((prev) => ({ ...prev, project: pList[0]._id }));
         }

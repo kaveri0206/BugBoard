@@ -19,6 +19,26 @@ const COLUMNS = [
   ISSUE_STATUS?.CLOSED || 'Closed',
 ];
 
+// Helper to reliably extract issues array regardless of response shape
+const extractIssuesFromResponse = (res) => {
+  if (!res) return [];
+  const body = res.data !== undefined ? res.data : res;
+
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.issues)) return body.issues;
+  if (Array.isArray(body?.data?.issues)) return body.data.issues;
+  if (Array.isArray(body?.data)) return body.data;
+  if (Array.isArray(body?.items)) return body.items;
+  return [];
+};
+
+// Normalize status strings (e.g., "in_progress", "In Progress", "IN-PROGRESS" -> "inprogress")
+const normalizeStatus = (str) =>
+  String(str || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+
 export default function KanbanBoardPage() {
   const [boardData, setBoardData] = useState({});
   const [loading, setLoading] = useState(true);
@@ -31,16 +51,19 @@ export default function KanbanBoardPage() {
   const loadBoardIssues = async () => {
     try {
       const res = await issueService.getAll({ limit: 100 });
-      const issues = res.data?.data?.issues || res.data?.issues || res.data?.data || [];
+      const issues = extractIssuesFromResponse(res);
 
       const initialColumns = {};
       COLUMNS.forEach((col) => {
+        const normalizedCol = normalizeStatus(col);
         initialColumns[col] = issues.filter(
-          (i) => (i.status || '').toLowerCase() === col.toLowerCase()
+          (i) => normalizeStatus(i.status) === normalizedCol
         );
       });
+
       setBoardData(initialColumns);
     } catch (e) {
+      console.error('Error loading Kanban issues:', e);
       notify('Failed to load Kanban board issues', 'error');
     } finally {
       setLoading(false);
