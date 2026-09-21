@@ -5,6 +5,7 @@
  */
 
 const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
 
 // Dynamically resolve User, Issue, and Project models
 let User;
@@ -28,7 +29,7 @@ try {
   Project = mongoose.models.Project;
 }
 
-// Safely resolve the Activity / ActivityLog model across file naming conventions
+// Safely resolve ActivityLog model
 let ActivityLogModel = null;
 try {
   ActivityLogModel = require('../models/activity.model');
@@ -65,7 +66,6 @@ const checkIsAdmin = async (req) => {
   const userObj = req.user || req.currentUser || {};
   let rawRole = userObj.role || userObj.user?.role || req.role || '';
 
-  // If role is not directly on req.user, look up user from DB using the token ID
   if (!rawRole && userObj._id && User) {
     try {
       const dbUser = await User.findById(userObj._id).select('role');
@@ -85,31 +85,63 @@ const checkIsAdmin = async (req) => {
  */
 exports.getAllIssues = async (req, res) => {
   try {
-    const { project, status, priority, severity, search } = req.query;
+    const { project, status, priority, severity, search, limit, page } = req.query;
     const query = {};
 
-    if (project) query.project = project;
-    if (status) query.status = status;
-    if (priority) query.priority = priority;
-    if (severity) query.severity = severity;
+    // Ignore empty string filters to prevent matching zero records
+    if (project && String(project).trim() !== '' && project !== 'all') {
+      if (mongoose.Types.ObjectId.isValid(project)) {
+        query.project = project;
+      } else {
+        const foundProj = await Project.findOne({
+          $or: [
+            { key: String(project).toUpperCase() },
+            { projectKey: String(project).toUpperCase() },
+            { name: project }
+          ]
+        });
+        if (foundProj) query.project = foundProj._id;
+      }
+    }
 
-    if (search) {
+    if (status && String(status).trim() !== '' && status !== 'all') {
+      query.status = status;
+    }
+    if (priority && String(priority).trim() !== '' && priority !== 'all') {
+      query.priority = priority;
+    }
+    if (severity && String(severity).trim() !== '' && severity !== 'all') {
+      query.severity = severity;
+    }
+
+    if (search && String(search).trim() !== '') {
+      const s = String(search).trim();
       query.$or = [
-        { title: { $regex: search,$options: 'i' } },
-        { issueKey: { $regex: search,$options: 'i' } },
-        { description: { $regex: search,$options: 'i' } },
+        { title: { $regex: s,$options: 'i' } },
+        { issueKey: { $regex: s,$options: 'i' } },
+        { description: { $regex: s,$options: 'i' } },
       ];
     }
 
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 100;
+    const skipNum = (pageNum - 1) * limitNum;
+
+    const total = await Issue.countDocuments(query);
     const issues = await Issue.find(query)
       .populate('project', 'name key projectKey')
       .populate('reporter', 'name email role')
       .populate('assignee', 'name email role')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skipNum)
+      .limit(limitNum);
 
+    // Provide universal payload compatibility for all frontend versions
     return res.status(200).json({
       success: true,
-      data: { issues },
+      count: issues.length,
+      total,
+      data: { issues, total, count: issues.length },
       issues,
     });
   } catch (err) {
@@ -140,12 +172,10 @@ exports.getIssueById = async (req, res) => {
     const isObjectId = mongoose.Types.ObjectId.isValid(id);
     const query = isObjectId ? { _id: id } : { issueKey: id.toUpperCase() };
 
-    let issueQuery = Issue.findOne(query)
+    let issue = await Issue.findOne(query)
       .populate('project', 'name key projectKey')
       .populate('reporter', 'name email role avatar')
       .populate('assignee', 'name email role avatar');
-
-    let issue = await issueQuery.exec();
 
     if (!issue) {
       return res.status(404).json({
@@ -161,14 +191,14 @@ exports.getIssueById = async (req, res) => {
           select: 'name email role avatar',
         });
       }
-    } catch (popErr1) {
+    } catch (popErr) {
       try {
         await issue.populate({
           path: 'comments.user',
           select: 'name email role avatar',
         });
       } catch (popErr2) {
-        // Non-fatal fallback
+        // Safe fallback
       }
     }
 
@@ -252,13 +282,10 @@ exports.createIssue = async (req, res) => {
   }
 };
 
-
-const jwt = require('jsonwebtoken');
-
 /**
  * @route   PUT /api/v1/issues/:id
  * @route   PATCH /api/v1/issues/:id
- * @desc    Update defect attributes with guaranteed JWT fallback verification
+ * @desc    Update defect attributes with Admin-only assignment RBAC verification
  */
 exports.updateIssue = async (req, res) => {
   try {
@@ -277,23 +304,20 @@ exports.updateIssue = async (req, res) => {
       updateData.assignee = null;
     }
 
-    // If assignee is being changed, verify admin access
+    // RBAC: Verify admin privileges if assignee is modified
     if (updateData.assignee !== undefined) {
       const currentAssigneeStr = String(existingIssue.assignee || '');
       const newAssigneeStr = String(updateData.assignee || '');
 
       if (currentAssigneeStr !== newAssigneeStr) {
-        // 1. Try reading user from req.user
         let currentUser = req.user || req.currentUser;
 
-        // 2. Fallback: extract and decode token directly from Authorization header
         if (!currentUser && req.headers.authorization) {
           try {
             const token = req.headers.authorization.split(' ')[1];
             if (token) {
-              const decoded = jwt.decode(token); // or jwt.verify with your secret
+              const decoded = jwt.decode(token);
               if (decoded) {
-                // If user model exists, load fresh user
                 if (User && decoded.id) {
                   currentUser = await User.findById(decoded.id);
                 } else {
@@ -310,9 +334,6 @@ exports.updateIssue = async (req, res) => {
           currentUser?.role || currentUser?.user?.role || ''
         ).trim().toLowerCase();
 
-        console.log('[RBAC CHECK] Assignee update request by role:', role);
-
-        // Allow 'admin', 'administrator', or bypass if role is Admin in any case
         if (role !== 'admin' && role !== 'administrator') {
           return res.status(403).json({
             success: false,
@@ -333,7 +354,6 @@ exports.updateIssue = async (req, res) => {
 
     const actorId = req.user?._id || req.user?.id;
 
-    // Audit log
     if (
       updateData.assignee !== undefined &&
       String(existingIssue.assignee || '') !== String(updateData.assignee || '')
@@ -368,10 +388,9 @@ exports.updateIssue = async (req, res) => {
   }
 };
 
-
 /**
  * @route   PATCH /api/v1/issues/:id/status
- * @desc    Dedicated fast workflow status transition route
+ * @desc    Dedicated status transition route
  */
 exports.changeStatus = async (req, res) => {
   try {

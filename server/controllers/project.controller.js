@@ -3,17 +3,27 @@
  * @description Controller for projects list and workspace detail views.
  */
 
-const Project = require('../models/Project');
-const User = require('../models/User');
-const Issue = require('../models/Issue');
-const asyncHandler = require('../utils/asyncHandler');
-const ApiError = require('../utils/apiError');
+const mongoose = require('mongoose');
+
+let Project;
+try {
+  Project = require('../models/Project') || require('../models/project.model');
+} catch (e) {
+  Project = mongoose.models.Project;
+}
+
+let Issue;
+try {
+  Issue = require('../models/Issue') || require('../models/issue.model');
+} catch (e) {
+  Issue = mongoose.models.Issue;
+}
 
 /**
  * @route   GET /api/v1/projects
  * @desc    Fetch all projects with defect count summaries
  */
-const getProjects = asyncHandler(async (req, res) => {
+const getProjects = async (req, res) => {
   try {
     const projects = await Project.find()
       .populate({ path: 'lead', select: 'name email role' })
@@ -54,66 +64,110 @@ const getProjects = asyncHandler(async (req, res) => {
       projects: [],
     });
   }
-});
+};
 
 /**
  * @route   GET /api/v1/projects/:id
- * @desc    Fetch single project details and associated defect list
+ * @desc    Fetch single project details and associated defect list safely
  */
-const getProjectById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const isMongoId = /^[0-9a-fA-F]{24}$/.test(id);
-  const query = isMongoId ? { _id: id } : { key: id.toUpperCase() };
+const getProjectById = async (req, res) => {
+  try {
+    const { id } = req.params;
 
-  const project = await Project.findOne(query)
-    .populate({ path: 'lead', select: 'name email role' })
-    .populate({ path: 'members', select: 'name email role' })
-    .lean();
+    if (!id || id === 'undefined' || id === 'null') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid project identifier provided',
+      });
+    }
 
-  if (!project) {
-    throw new ApiError(404, 'Project not found');
+    const isMongoId = mongoose.Types.ObjectId.isValid(id);
+    let project = null;
+
+    if (isMongoId) {
+      project = await Project.findById(id)
+        .populate({ path: 'lead', select: 'name email role' })
+        .populate({ path: 'members', select: 'name email role' })
+        .lean();
+    }
+
+    if (!project) {
+      project = await Project.findOne({
+        $or: [
+          { key: new RegExp(`^${id}$`, 'i') },
+          { projectKey: new RegExp(`^${id}$`, 'i') },
+          { name: new RegExp(`^${id}$`, 'i') },
+        ],
+      })
+        .populate({ path: 'lead', select: 'name email role' })
+        .populate({ path: 'members', select: 'name email role' })
+        .lean();
+    }
+
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: 'Project workspace not found',
+      });
+    }
+
+    const issues = await Issue.find({ project: project._id })
+      .populate({ path: 'reporter', select: 'name email role' })
+      .populate({ path: 'assignee', select: 'name email role' })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const payload = {
+      ...project,
+      issues: issues || [],
+      issueCount: (issues || []).length,
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: payload,
+      project: payload,
+      issues: issues || [],
+    });
+  } catch (err) {
+    console.error('[GET PROJECT BY ID ERROR]:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve project workspace',
+      error: err.message,
+    });
   }
-
-  const issues = await Issue.find({ project: project._id })
-    .populate({ path: 'assignee', select: 'name email' })
-    .sort({ createdAt: -1 })
-    .lean();
-
-  const payload = {
-    ...project,
-    issues: issues || [],
-    issueCount: (issues || []).length,
-  };
-
-  return res.status(200).json({
-    success: true,
-    data: payload,
-    project: payload,
-    issues: issues || [],
-  });
-});
+};
 
 /**
  * @route   POST /api/v1/projects
  */
-const createProject = asyncHandler(async (req, res) => {
-  const { name, key, description, members } = req.body;
-  const project = await Project.create({
-    name,
-    key: key.toUpperCase(),
-    projectKey: key.toUpperCase(),
-    description,
-    lead: req.user._id,
-    members: members && members.length > 0 ? members : [req.user._id],
-  });
+const createProject = async (req, res) => {
+  try {
+    const { name, key, description, members } = req.body;
+    const project = await Project.create({
+      name,
+      key: key.toUpperCase(),
+      projectKey: key.toUpperCase(),
+      description,
+      lead: req.user?._id,
+      members: members && members.length > 0 ? members : [req.user?._id],
+    });
 
-  return res.status(201).json({
-    success: true,
-    message: 'Project created successfully',
-    data: project,
-    project: project,
-  });
-});
+    return res.status(201).json({
+      success: true,
+      message: 'Project created successfully',
+      data: project,
+      project: project,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create project',
+      error: err.message,
+    });
+  }
+};
 
 module.exports = {
   getProjects,
