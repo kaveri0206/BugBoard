@@ -19,7 +19,6 @@ const COLUMNS = [
   ISSUE_STATUS?.CLOSED || 'Closed',
 ];
 
-// Helper to reliably extract issues array regardless of response shape
 const extractIssuesFromResponse = (res) => {
   if (!res) return [];
   const body = res.data !== undefined ? res.data : res;
@@ -32,7 +31,6 @@ const extractIssuesFromResponse = (res) => {
   return [];
 };
 
-// Normalize status strings (e.g., "in_progress", "In Progress", "IN-PROGRESS" -> "inprogress")
 const normalizeStatus = (str) =>
   String(str || '')
     .trim()
@@ -63,7 +61,7 @@ export default function KanbanBoardPage() {
 
       setBoardData(initialColumns);
     } catch (e) {
-      console.error('Error loading Kanban issues:', e);
+      console.error('Failed to load Kanban board issues:', e);
       notify('Failed to load Kanban board issues', 'error');
     } finally {
       setLoading(false);

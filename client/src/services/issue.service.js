@@ -1,27 +1,30 @@
 /**
  * @file client/src/services/issue.service.js
- * @description Issue API service with universal dual-mode array/object unpacking.
+ * @description Issue API service with universal response unpacking.
  */
 import api from './api';
 
-const extractIssues = (data) => {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.issues)) return data.issues;
-  if (Array.isArray(data?.data?.issues)) return data.data.issues;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.items)) return data.items;
+const extractIssues = (res) => {
+  if (!res) return [];
+  const body = res.data !== undefined ? res.data : res;
+
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.issues)) return body.issues;
+  if (Array.isArray(body?.data?.issues)) return body.data.issues;
+  if (Array.isArray(body?.data)) return body.data;
+  if (Array.isArray(body?.items)) return body.items;
   return [];
 };
 
 export const issueService = {
   getAll: async (params = {}) => {
     const response = await api.get('/issues', { params });
-    const items = extractIssues(response.data);
+    const items = extractIssues(response);
 
-    // Create a hybrid array/object payload to satisfy all component access patterns
+    // Hybrid array/object envelope to support all component syntax
     const payload = [...items];
     payload.issues = items;
-    payload.data = items;
+    payload.data = { issues: items };
     payload.items = items;
     payload.total = items.length;
     payload.count = items.length;
