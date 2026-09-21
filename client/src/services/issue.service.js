@@ -1,45 +1,36 @@
 /**
  * @file client/src/services/issue.service.js
- * @description Issue API service with universal response unpacking.
+ * @description Issue API service with universal dual-mode array/object unpacking.
  */
 import api from './api';
 
-// Helper to extract issues array regardless of backend wrapper structure
-const unpackIssuesResponse = (res) => {
-  const d = res?.data;
-  let items = [];
-
-  if (Array.isArray(d)) {
-    items = d;
-  } else if (Array.isArray(d?.issues)) {
-    items = d.issues;
-  } else if (Array.isArray(d?.data?.issues)) {
-    items = d.data.issues;
-  } else if (Array.isArray(d?.data)) {
-    items = d.data;
-  } else if (Array.isArray(d?.items)) {
-    items = d.items;
-  }
-
-  // Preserve both direct array access and object envelope properties
-  return {
-    ...res,
-    data: {
-      success: true,
-      issues: items,
-      data: { issues: items },
-      items: items,
-      total: items.length,
-      count: items.length,
-      ...(typeof d === 'object' ? d : {}),
-    },
-  };
+const extractIssues = (data) => {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.issues)) return data.issues;
+  if (Array.isArray(data?.data?.issues)) return data.data.issues;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.items)) return data.items;
+  return [];
 };
 
 export const issueService = {
   getAll: async (params = {}) => {
-    const res = await api.get('/issues', { params });
-    return unpackIssuesResponse(res);
+    const response = await api.get('/issues', { params });
+    const items = extractIssues(response.data);
+
+    // Create a hybrid array/object payload to satisfy all component access patterns
+    const payload = [...items];
+    payload.issues = items;
+    payload.data = items;
+    payload.items = items;
+    payload.total = items.length;
+    payload.count = items.length;
+    payload.success = true;
+
+    return {
+      ...response,
+      data: payload,
+    };
   },
 
   getById: async (id) => {

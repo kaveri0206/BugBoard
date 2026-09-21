@@ -1,5 +1,5 @@
 /**
- * @file project.controller.js
+ * @file server/controllers/project.controller.js
  * @description Controller for projects list and workspace detail views.
  */
 
@@ -110,7 +110,6 @@ const getProjectById = async (req, res) => {
     }
 
     if (!project) {
-      // Graceful fallback to first project rather than hard 404 breaking the workspace UI
       project = await Project.findOne().lean();
     }
 

@@ -1,13 +1,13 @@
 /**
- * @file issue.controller.js
- * @description Controller handling defect lifecycle, workflow transitions,
- * bulletproof Admin-only assignment RBAC verification, and immutable activity logging.
+ * @file server/controllers/issue.controller.js
+ * @description Defect ticket controller with universal response formatting,
+ * case-insensitive filtering, and Admin assignment RBAC checks.
  */
 
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 
-// Dynamically resolve User, Issue, and Project models
+// Dynamically resolve models
 let User;
 try {
   User = require('../models/user.model') || require('../models/User');
@@ -29,7 +29,6 @@ try {
   Project = mongoose.models.Project;
 }
 
-// Safely resolve the Activity / ActivityLog model across file naming conventions
 let ActivityLogModel = null;
 try {
   ActivityLogModel = require('../models/activity.model');
@@ -45,7 +44,6 @@ try {
   }
 }
 
-// Helper to record activity safely without crashing primary request
 const logActivitySafe = async (payload) => {
   try {
     const Model =
@@ -57,11 +55,10 @@ const logActivitySafe = async (payload) => {
       await Model.create(payload);
     }
   } catch (err) {
-    console.warn('Non-fatal activity log write notice:', err.message);
+    console.warn('Activity log notice:', err.message);
   }
 };
 
-// Robust helper to check whether a user has the Admin role
 const checkIsAdmin = async (req) => {
   const userObj = req.user || req.currentUser || {};
   let rawRole = userObj.role || userObj.user?.role || req.role || '';
@@ -71,7 +68,7 @@ const checkIsAdmin = async (req) => {
       const dbUser = await User.findById(userObj._id).select('role');
       if (dbUser) rawRole = dbUser.role;
     } catch (dbErr) {
-      // ignore db lookup failure
+      // ignore
     }
   }
 
@@ -81,14 +78,14 @@ const checkIsAdmin = async (req) => {
 
 /**
  * @route   GET /api/v1/issues
- * @desc    Fetch all defects with foolproof fallback and zero 500 errors
+ * @desc    Fetch all defects with safe sanitization of empty filter values
  */
 exports.getAllIssues = async (req, res) => {
   try {
     const { project, status, priority, severity, search, limit, page } = req.query;
     const query = {};
 
-    // 1. Sanitize project filter
+    // Only apply project filter if it has actual characters
     if (project && String(project).trim() !== '' && project !== 'all' && project !== 'undefined') {
       if (mongoose.Types.ObjectId.isValid(project)) {
         query.project = project;
@@ -97,25 +94,25 @@ exports.getAllIssues = async (req, res) => {
           $or: [
             { key: String(project).toUpperCase() },
             { projectKey: String(project).toUpperCase() },
-            { name: new RegExp(`^${project}$`, 'i') }
-          ]
+            { name: new RegExp(`^${project}$`, 'i') },
+          ],
         }).lean();
         if (foundProj) query.project = foundProj._id;
       }
     }
 
-    // 2. Sanitize dropdown filters
+    // Dropdown filters: clean empty strings and apply case-insensitive matching
     if (status && String(status).trim() !== '' && status !== 'all') {
-      query.status = status;
+      query.status = new RegExp(`^${String(status).trim()}$`, 'i');
     }
     if (priority && String(priority).trim() !== '' && priority !== 'all') {
-      query.priority = priority;
+      query.priority = new RegExp(`^${String(priority).trim()}$`, 'i');
     }
     if (severity && String(severity).trim() !== '' && severity !== 'all') {
-      query.severity = severity;
+      query.severity = new RegExp(`^${String(severity).trim()}$`, 'i');
     }
 
-    // 3. Search filter
+    // Text search query
     if (search && String(search).trim() !== '') {
       const s = String(search).trim();
       query.$or = [
@@ -139,11 +136,6 @@ exports.getAllIssues = async (req, res) => {
       .limit(limitNum)
       .lean();
 
-    // Universal payload structure satisfying:
-    // - res.data.data.issues
-    // - res.data.issues
-    // - res.data.data
-    // - Array.isArray(res.data)
     return res.status(200).json({
       success: true,
       count: (issues || []).length,
@@ -153,8 +145,8 @@ exports.getAllIssues = async (req, res) => {
       data: {
         issues: issues || [],
         total: total || 0,
-        count: (issues || []).length
-      }
+        count: (issues || []).length,
+      },
     });
   } catch (err) {
     console.error('Safe fallback getAllIssues:', err);
@@ -164,14 +156,13 @@ exports.getAllIssues = async (req, res) => {
       total: 0,
       issues: [],
       items: [],
-      data: { issues: [], total: 0, count: 0 }
+      data: { issues: [], total: 0, count: 0 },
     });
   }
 };
 
 /**
  * @route   GET /api/v1/issues/:id
- * @desc    Get single defect ticket by MongoDB _id or issueKey safely
  */
 exports.getIssueById = async (req, res) => {
   try {
@@ -213,7 +204,7 @@ exports.getIssueById = async (req, res) => {
           select: 'name email role avatar',
         });
       } catch (popErr2) {
-        // Non-fatal fallback
+        // Safe fallback
       }
     }
 
@@ -223,7 +214,6 @@ exports.getIssueById = async (req, res) => {
       issue,
     });
   } catch (err) {
-    console.error('Safe getIssueById catch:', err.message);
     return res.status(500).json({
       success: false,
       message: 'Failed to retrieve defect ticket',
@@ -234,13 +224,11 @@ exports.getIssueById = async (req, res) => {
 
 /**
  * @route   POST /api/v1/issues
- * @desc    Create a new defect ticket
  */
 exports.createIssue = async (req, res) => {
   try {
     const issueData = { ...req.body };
 
-    // RBAC: Only Admin can assign upon initial creation
     if (issueData.assignee) {
       const isAdmin = await checkIsAdmin(req);
       if (!isAdmin) {
@@ -288,7 +276,6 @@ exports.createIssue = async (req, res) => {
       issue: populated,
     });
   } catch (err) {
-    console.error('Error creating issue:', err);
     return res.status(500).json({
       success: false,
       message: 'Failed to create defect ticket',
@@ -300,7 +287,6 @@ exports.createIssue = async (req, res) => {
 /**
  * @route   PUT /api/v1/issues/:id
  * @route   PATCH /api/v1/issues/:id
- * @desc    Update defect attributes with guaranteed JWT fallback verification
  */
 exports.updateIssue = async (req, res) => {
   try {
@@ -319,7 +305,6 @@ exports.updateIssue = async (req, res) => {
       updateData.assignee = null;
     }
 
-    // RBAC check for assignment
     if (updateData.assignee !== undefined) {
       const currentAssigneeStr = String(existingIssue.assignee || '');
       const newAssigneeStr = String(updateData.assignee || '');
@@ -341,7 +326,7 @@ exports.updateIssue = async (req, res) => {
               }
             }
           } catch (jwtErr) {
-            console.warn('Direct JWT decode notice:', jwtErr.message);
+            console.warn('JWT decode notice:', jwtErr.message);
           }
         }
 
@@ -394,7 +379,6 @@ exports.updateIssue = async (req, res) => {
       issue: updatedIssue,
     });
   } catch (err) {
-    console.error('Error updating issue:', err);
     return res.status(500).json({
       success: false,
       message: 'Failed to update issue',
@@ -405,7 +389,6 @@ exports.updateIssue = async (req, res) => {
 
 /**
  * @route   PATCH /api/v1/issues/:id/status
- * @desc    Dedicated fast workflow status transition route
  */
 exports.changeStatus = async (req, res) => {
   try {
@@ -453,7 +436,6 @@ exports.changeStatus = async (req, res) => {
       issue: populated,
     });
   } catch (err) {
-    console.error('Error changing status:', err);
     return res.status(500).json({
       success: false,
       message: 'Status transition failed',
