@@ -1,17 +1,62 @@
 /**
- * @file issue.service.js
+ * @file client/src/services/issue.service.js
+ * @description Issue API service with universal response unpacking.
  */
-import api from './api'; // or axios
+import api from './api';
 
-const getAuthHeaders = () => {
-  const token = localStorage.getItem('token');
-  return token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+// Helper to extract issues array regardless of backend wrapper structure
+const unpackIssuesResponse = (res) => {
+  const d = res?.data;
+  let items = [];
+
+  if (Array.isArray(d)) {
+    items = d;
+  } else if (Array.isArray(d?.issues)) {
+    items = d.issues;
+  } else if (Array.isArray(d?.data?.issues)) {
+    items = d.data.issues;
+  } else if (Array.isArray(d?.data)) {
+    items = d.data;
+  } else if (Array.isArray(d?.items)) {
+    items = d.items;
+  }
+
+  // Preserve both direct array access and object envelope properties
+  return {
+    ...res,
+    data: {
+      success: true,
+      issues: items,
+      data: { issues: items },
+      items: items,
+      total: items.length,
+      count: items.length,
+      ...(typeof d === 'object' ? d : {}),
+    },
+  };
 };
 
 export const issueService = {
-  getAll: (params) => api.get('/issues', { params, ...getAuthHeaders() }),
-  getById: (id) => api.get(`/issues/${id}`, getAuthHeaders()),
-  create: (data) => api.post('/issues', data, getAuthHeaders()),
-  update: (id, data) => api.put(`/issues/${id}`, data, getAuthHeaders()),
-  changeStatus: (id, status) => api.patch(`/issues/${id}/status`, { status }, getAuthHeaders()),
+  getAll: async (params = {}) => {
+    const res = await api.get('/issues', { params });
+    return unpackIssuesResponse(res);
+  },
+
+  getById: async (id) => {
+    return api.get(`/issues/${id}`);
+  },
+
+  create: async (data) => {
+    return api.post('/issues', data);
+  },
+
+  update: async (id, data) => {
+    return api.put(`/issues/${id}`, data);
+  },
+
+  changeStatus: async (id, status) => {
+    return api.patch(`/issues/${id}/status`, { status });
+  },
 };
+
+export default issueService;
