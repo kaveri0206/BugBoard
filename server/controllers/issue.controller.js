@@ -1,46 +1,40 @@
 /**
  * @file server/controllers/issue.controller.js
- * @description Hardened Issue controller supporting robust query sanitization,
- * seamless defect creation, and resilient status updating.
+ * @description Bulletproof Defect ticket controller for BugBoard.
  */
 
 const mongoose = require('mongoose');
 
-let User;
-try {
-  User = require('../models/user.model') || require('../models/User');
-} catch (e) {
-  User = mongoose.models.User;
-}
+// Bulletproof model resolver that never returns undefined
+const getModel = (name) => {
+  if (mongoose.models && mongoose.models[name]) {
+    return mongoose.models[name];
+  }
+  try {
+    return require(`../models/${name.toLowerCase()}.model`);
+  } catch (e1) {
+    try {
+      return require(`../models/${name}`);
+    } catch (e2) {
+      return mongoose.model(name);
+    }
+  }
+};
 
-let Issue;
-try {
-  Issue = require('../models/issue.model') || require('../models/Issue');
-} catch (e) {
-  Issue = mongoose.models.Issue;
-}
-
-let Project;
-try {
-  Project = require('../models/project.model') || require('../models/Project');
-} catch (e) {
-  Project = mongoose.models.Project;
-}
-
-/**
- * @route   GET /api/v1/issues
- */
+// 1. GET ALL ISSUES (Feeds Issue Registry & Kanban Board)
 exports.getAllIssues = async (req, res) => {
   try {
+    const IssueModel = getModel('Issue');
+    const ProjectModel = getModel('Project');
+
     const { project, status, priority, severity, search, limit, page } = req.query;
     const query = {};
 
-    // Only add filters if non-empty and not 'all'
     if (project && String(project).trim() !== '' && project !== 'all' && project !== 'undefined') {
       if (mongoose.Types.ObjectId.isValid(project)) {
         query.project = project;
-      } else {
-        const foundProj = await Project.findOne({
+      } else if (ProjectModel) {
+        const foundProj = await ProjectModel.findOne({
           $or: [
             { key: String(project).toUpperCase() },
             { projectKey: String(project).toUpperCase() },
@@ -74,8 +68,8 @@ exports.getAllIssues = async (req, res) => {
     const limitNum = parseInt(limit, 10) || 100;
     const skipNum = (pageNum - 1) * limitNum;
 
-    const total = await Issue.countDocuments(query);
-    const issues = await Issue.find(query)
+    const total = await IssueModel.countDocuments(query);
+    const issues = await IssueModel.find(query)
       .populate('project', 'name key projectKey')
       .populate('reporter', 'name email role')
       .populate('assignee', 'name email role')
@@ -109,11 +103,10 @@ exports.getAllIssues = async (req, res) => {
   }
 };
 
-/**
- * @route   GET /api/v1/issues/:id
- */
+// 2. GET ISSUE BY ID
 exports.getIssueById = async (req, res) => {
   try {
+    const IssueModel = getModel('Issue');
     const { id } = req.params;
     if (!id || id === 'undefined' || id === 'null') {
       return res.status(400).json({ success: false, message: 'Invalid issue ID' });
@@ -122,7 +115,7 @@ exports.getIssueById = async (req, res) => {
     const isObjectId = mongoose.Types.ObjectId.isValid(id);
     const query = isObjectId ? { _id: id } : { issueKey: String(id).toUpperCase() };
 
-    let issue = await Issue.findOne(query)
+    const issue = await IssueModel.findOne(query)
       .populate('project', 'name key projectKey')
       .populate('reporter', 'name email role avatar')
       .populate('assignee', 'name email role avatar');
@@ -141,18 +134,22 @@ exports.getIssueById = async (req, res) => {
   }
 };
 
-/**
- * @route   POST /api/v1/issues
- */
+// 3. CREATE ISSUE (Fixes the "Cannot read properties of undefined reading findById")
 exports.createIssue = async (req, res) => {
   try {
+    const IssueModel = getModel('Issue');
+    const ProjectModel = getModel('Project');
+    const UserModel = getModel('User');
+
     const issueData = { ...req.body };
 
     let targetProject = null;
-    if (issueData.project && mongoose.Types.ObjectId.isValid(issueData.project)) {
-      targetProject = await Project.findById(issueData.project);
-    } else {
-      targetProject = await Project.findOne();
+    if (ProjectModel) {
+      if (issueData.project && mongoose.Types.ObjectId.isValid(issueData.project)) {
+        targetProject = await ProjectModel.findById(issueData.project);
+      } else {
+        targetProject = await ProjectModel.findOne();
+      }
     }
 
     if (targetProject) {
@@ -162,22 +159,22 @@ exports.createIssue = async (req, res) => {
     if (!issueData.reporter) {
       if (req.user?._id || req.user?.id) {
         issueData.reporter = req.user._id || req.user.id;
-      } else {
-        const defaultUser = await User.findOne();
+      } else if (UserModel) {
+        const defaultUser = await UserModel.findOne();
         if (defaultUser) issueData.reporter = defaultUser._id;
       }
     }
 
     const prefix = targetProject?.key || targetProject?.projectKey || 'DEF';
-    const count = await Issue.countDocuments();
+    const count = await IssueModel.countDocuments();
     issueData.issueKey = `${prefix}-${count + 101}`;
 
     if (!issueData.status) {
       issueData.status = 'Open';
     }
 
-    const newIssue = await Issue.create(issueData);
-    const populated = await Issue.findById(newIssue._id)
+    const newIssue = await IssueModel.create(issueData);
+    const populated = await IssueModel.findById(newIssue._id)
       .populate('project', 'name key projectKey')
       .populate('reporter', 'name email role')
       .populate('assignee', 'name email role');
@@ -197,12 +194,10 @@ exports.createIssue = async (req, res) => {
   }
 };
 
-/**
- * @route   PUT /api/v1/issues/:id
- * @route   PATCH /api/v1/issues/:id
- */
+// 4. UPDATE ISSUE
 exports.updateIssue = async (req, res) => {
   try {
+    const IssueModel = getModel('Issue');
     const { id } = req.params;
     const updateData = { ...req.body };
 
@@ -210,7 +205,7 @@ exports.updateIssue = async (req, res) => {
       updateData.assignee = null;
     }
 
-    const updatedIssue = await Issue.findByIdAndUpdate(
+    const updatedIssue = await IssueModel.findByIdAndUpdate(
       id,
       { $set: updateData },
       { new: true, runValidators: true }
@@ -230,15 +225,14 @@ exports.updateIssue = async (req, res) => {
   }
 };
 
-/**
- * @route   PATCH /api/v1/issues/:id/status
- */
+// 5. CHANGE STATUS
 exports.changeStatus = async (req, res) => {
   try {
+    const IssueModel = getModel('Issue');
     const { id } = req.params;
     const { status } = req.body;
 
-    const existingIssue = await Issue.findById(id);
+    const existingIssue = await IssueModel.findById(id);
     if (!existingIssue) {
       return res.status(404).json({ success: false, message: 'Issue not found' });
     }
@@ -246,7 +240,7 @@ exports.changeStatus = async (req, res) => {
     existingIssue.status = status;
     await existingIssue.save();
 
-    const populated = await Issue.findById(id)
+    const populated = await IssueModel.findById(id)
       .populate('project', 'name key projectKey')
       .populate('reporter', 'name email role')
       .populate('assignee', 'name email role');
